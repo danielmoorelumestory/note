@@ -152,34 +152,36 @@ import { href } from '../lib/url';
   }
 
   .group-card {
-    background: var(--bg-raised);
+    background: var(--bg-card);
     border: 1px solid var(--line);
-    border-radius: 6px;
+    border-radius: var(--radius-md);
     overflow: hidden;
-    transition: border-color 0.2s ease;
+    box-shadow: var(--shadow-sm);
+    transition: all 0.2s ease;
   }
 
   .group-card:hover {
-    border-color: #cbbeaf;
+    border-color: rgba(30, 27, 24, 0.25);
+    box-shadow: var(--shadow-md);
   }
 
   .group-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 14px 18px;
-    background: rgba(227, 217, 204, 0.25);
+    padding: 16px 20px;
+    background: var(--bg-raised);
     border-bottom: 1px solid var(--line);
   }
 
   .group-heading {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
   }
 
   .group-index {
-    font-size: 16px;
+    font-size: 17px;
     color: var(--accent);
     font-weight: 600;
   }

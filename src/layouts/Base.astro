@@ -8,8 +8,8 @@ interface Props {
   current?: 'notes' | 'lab';
 }
 
-const { title, description = '笔记和能跑的小页面。', current } = Astro.props;
-const pageTitle = title ? `${title} · 记` : '记';
+const { title, description = '笔记和行业研究专栏。', current } = Astro.props;
+const pageTitle = title ? `${title} · 记` : '记 · 笔记与行业研究';
 ---
 
 <html lang="zh-CN">
@@ -22,19 +22,35 @@ const pageTitle = title ? `${title} · 记` : '记';
     <title>{pageTitle}</title>
   </head>
   <body>
-    <div class="shell">
-      <header class="top">
-        <a class="brand" href={href()}>记</a>
+    <div class="top-wrap">
+      <header class="top shell">
+        <a class="brand" href={href()}>
+          <span class="brand-icon">记</span>
+          <span class="brand-title">记</span>
+          <span class="brand-tag">知识库 & 专栏</span>
+        </a>
         <nav class="nav">
-          <a href={href('notes')} aria-current={current === 'notes' ? 'page' : undefined}>笔记</a>
+          <a href={href('notes')} aria-current={current === 'notes' ? 'page' : undefined}>全部笔记</a>
+          <a href={href('notes#industry')} class="nav-highlight">行业专栏</a>
           <a href={href('lab')} aria-current={current === 'lab' ? 'page' : undefined}>实验</a>
         </nav>
       </header>
+    </div>
+    <div class="shell">
       <main>
         <slot />
       </main>
       <footer class="foot">
-        <a href="https://github.com/danielmoorelumestory/note">danielmoorelumestory/note</a>
+        <div class="foot-inner">
+          <div>
+            <div class="foot-brand">记 · 个人随笔与行业研究自选池</div>
+            <p class="foot-desc">静态站构建，推到 main 自动发布到 GitHub Pages。</p>
+          </div>
+          <div class="foot-links">
+            <a href="https://github.com/danielmoorelumestory/note" target="_blank" rel="noopener">GitHub 仓库</a>
+            <a href={href('rss.xml')}>RSS</a>
+          </div>
+        </div>
       </footer>
     </div>
   </body>

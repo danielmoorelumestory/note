@@ -2,6 +2,7 @@
 import { render } from 'astro:content';
 import Base from '../../layouts/Base.astro';
 import { formatDate, visibleNotes } from '../../lib/notes';
+import { href } from '../../lib/url';
 
 export async function getStaticPaths() {
   const notes = await visibleNotes();
@@ -12,29 +13,110 @@ export async function getStaticPaths() {
 }
 
 const { note } = Astro.props;
-const { Content } = await render(note);
+const { Content, headings } = await render(note);
+const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
 ---
 
 <Base title={note.data.title} current="notes" description={note.data.summary || note.data.title}>
-  <article>
-    <header class="article-head">
-      <p class="meta">
-        <time datetime={note.data.date.toISOString()}>{formatDate(note.data.date)}</time>
-        {note.data.draft && <span class="draft">草稿</span>}
-      </p>
-      <h1>{note.data.title}</h1>
-      {note.data.summary && <p class="lede">{note.data.summary}</p>}
-      {
-        note.data.tags.length > 0 && (
-          <div class="tags">
-            {note.data.tags.map((tag) => <span class="tag">{tag}</span>)}
+  <nav class="breadcrumb" aria-label="面包屑">
+    <a href={href()}>首页</a>
+    <span class="sep">/</span>
+    <a href={href('notes')}>笔记</a>
+    <span class="sep">/</span>
+    <span class="current">{note.data.title}</span>
+  </nav>
+
+  <div class="article-layout">
+    <article class="article-main">
+      <header class="article-head">
+        <div class="article-meta-bar">
+          <time datetime={note.data.date.toISOString()}>{formatDate(note.data.date)}</time>
+          <span class="dot">·</span>
+          <span>{note.data.tags.includes('行业研究') ? '行业深度研报' : '随笔笔记'}</span>
+          {note.data.draft && <span class="draft">草稿</span>}
+        </div>
+        <h1 class="article-title">{note.data.title}</h1>
+        {note.data.summary && <p class="article-summary">{note.data.summary}</p>}
+        {
+          note.data.tags.length > 0 && (
+            <div class="tags">
+              {note.data.tags.map((tag) => <span class="tag">{tag}</span>)}
+            </div>
+          )
+        }
+      </header>
+
+      <div class="prose">
+        <Content />
+      </div>
+
+      <footer class="article-foot">
+        <div class="source-path">
+          <span>文件源</span>
+          <code>src/content/notes/{note.id}.md</code>
+        </div>
+        <a href={href('notes')} class="back-link">← 返回全部笔记与专栏</a>
+      </footer>
+    </article>
+
+    {
+      tocHeadings.length > 0 && (
+        <aside class="article-sidebar" aria-label="文章目录">
+          <div class="toc-sticky">
+            <div class="toc-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="8" y1="6" x2="21" y2="6"></line>
+                <line x1="8" y1="12" x2="21" y2="12"></line>
+                <line x1="8" y1="18" x2="21" y2="18"></line>
+                <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                <line x1="3" y1="18" x2="3.01" y2="18"></line>
+              </svg>
+              <span>目录大纲</span>
+            </div>
+            <nav class="toc-list" id="toc-list">
+              {tocHeadings.map((h) => (
+                <a
+                  href={`#${h.slug}`}
+                  class={`toc-item depth-${h.depth}`}
+                  data-slug={h.slug}
+                >
+                  {h.text}
+                </a>
+              ))}
+            </nav>
           </div>
-        )
-      }
-    </header>
-    <div class="prose section">
-      <Content />
-    </div>
-    <p class="path">src/content/notes/{note.id}.md</p>
-  </article>
+        </aside>
+      )
+    }
+  </div>
 </Base>
+
+<script>
+  // 滚动时自动高亮目录大纲
+  const tocLinks = document.querySelectorAll<HTMLAnchorElement>('#toc-list .toc-item');
+  if (tocLinks.length > 0) {
+    const headings = Array.from(document.querySelectorAll<HTMLElement>('.prose h2, .prose h3'));
+
+    function onScroll() {
+      const scrollY = window.scrollY;
+      let currentSlug = '';
+
+      for (const h of headings) {
+        if (h.offsetTop - 110 <= scrollY) {
+          currentSlug = h.id;
+        } else {
+          break;
+        }
+      }
+
+      tocLinks.forEach((link) => {
+        const active = link.dataset.slug === currentSlug;
+        link.classList.toggle('active', active);
+      });
+    }
+
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+  }
+</script>
