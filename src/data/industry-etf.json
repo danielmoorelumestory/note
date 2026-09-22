@@ -237,7 +237,9 @@
         "name": "机器人ETF华夏",
         "market": "A股内地",
         "subTheme": "机器人",
-        "remark": "规模第一；159530（160亿/4.97亿/3年+34.67%）业绩更优，可作替代"
+        "remark": "规模第一；159530（160亿/4.97亿/3年+34.67%）业绩更优，可作替代",
+        "referenceUrl": "notes/robotics-industry-research",
+        "referenceTitle": "机器人ETF对比研报：562500 vs 159530"
       },
       {
         "code": "512660",
