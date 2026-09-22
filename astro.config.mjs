@@ -1,4 +1,5 @@
 import { defineConfig } from 'astro/config';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   site: 'https://danielmoorelumestory.github.io',
@@ -7,5 +8,8 @@ export default defineConfig({
     shikiConfig: {
       theme: 'github-light',
     },
+  },
+  vite: {
+    plugins: [tailwindcss()],
   },
 });
