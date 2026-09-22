@@ -6,6 +6,8 @@ export interface ETFItem {
   market: string;
   subTheme: string;
   remark: string;
+  referenceUrl?: string;
+  referenceTitle?: string;
 }
 
 export interface IndustryGroup {
