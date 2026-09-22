@@ -2,78 +2,240 @@
 import Base from '../../layouts/Base.astro';
 import { href } from '../../lib/url';
 import { formatDate, searchText, visibleNotes } from '../../lib/notes';
+import IndustryETFSection from '../../components/IndustryETFSection.astro';
+import { totalETFCount } from '../../lib/industry-etf';
 
 const notes = await visibleNotes();
 const tags = [...new Set(notes.flatMap((note) => note.data.tags))].sort();
 ---
 
-<Base title="笔记" current="notes" description="全部笔记">
+<Base title="笔记与专栏" current="notes" description="全部笔记与行业研究专栏">
   <header class="hero">
-    <h1>笔记</h1>
-    <p class="lede">文件名就是网址。以 <code>_</code> 开头的 markdown 不会发布，当模板用。</p>
+    <h1>笔记 & 专栏</h1>
+    <p class="lede">文件名即网址，收录随笔思考与行业研究工具库。推到 <code>main</code> 即发布。</p>
   </header>
 
-  <input class="search" id="q" type="search" placeholder="搜标题、摘要、标签" autocomplete="off" />
-  <div class="tags" id="tags">
-    {tags.map((tag) => <button class="chip" type="button" data-tag={tag}>{tag}</button>)}
+  <div class="view-switch" role="tablist">
+    <button
+      class="switch-btn active"
+      id="btn-notes"
+      type="button"
+      role="tab"
+      aria-selected="true"
+      data-target="view-notes"
+    >
+      📝 全部笔记 ({notes.length})
+    </button>
+    <button
+      class="switch-btn"
+      id="btn-industry"
+      type="button"
+      role="tab"
+      aria-selected="false"
+      data-target="view-industry"
+    >
+      📊 行业研究专栏 (7大单元 · {totalETFCount}只ETF)
+    </button>
   </div>
 
-  <ul class="note-list" id="list">
-    {
-      notes.map((note) => (
-        <li data-search={searchText(note)}>
-          <a href={href(`notes/${note.id}`)}>
-            <time class="date" datetime={note.data.date.toISOString()}>
-              {formatDate(note.data.date)}
-            </time>
-            <div>
-              <div class="title">
-                {note.data.title}
-                {note.data.draft && <span class="draft">草稿</span>}
+  <input
+    class="search"
+    id="q"
+    type="search"
+    placeholder="搜标题、摘要、标签，或搜 ETF 代码、赛道、备注..."
+    autocomplete="off"
+  />
+
+  <div class="view-pane" id="view-notes">
+    <div class="tags" id="tags">
+      {tags.map((tag) => <button class="chip" type="button" data-tag={tag}>{tag}</button>)}
+    </div>
+
+    <ul class="note-list" id="list">
+      {
+        notes.map((note) => (
+          <li data-search={searchText(note)}>
+            <a href={href(`notes/${note.id}`)}>
+              <time class="date" datetime={note.data.date.toISOString()}>
+                {formatDate(note.data.date)}
+              </time>
+              <div>
+                <div class="title">
+                  {note.data.title}
+                  {note.data.draft && <span class="draft">草稿</span>}
+                </div>
+                {note.data.summary && <p class="summary">{note.data.summary}</p>}
+                {
+                  note.data.tags.length > 0 && (
+                    <div class="tags">
+                      {note.data.tags.map((tag) => <span class="tag">{tag}</span>)}
+                    </div>
+                  )
+                }
               </div>
-              {note.data.summary && <p class="summary">{note.data.summary}</p>}
-              {
-                note.data.tags.length > 0 && (
-                  <div class="tags">
-                    {note.data.tags.map((tag) => <span class="tag">{tag}</span>)}
-                  </div>
-                )
-              }
-            </div>
-          </a>
-        </li>
-      ))
-    }
-  </ul>
-  <p class="empty" id="empty" hidden>没有匹配的笔记。</p>
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+    <p class="empty" id="empty" hidden>没有匹配的笔记。</p>
+  </div>
+
+  <div class="view-pane" id="view-industry" hidden>
+    <IndustryETFSection />
+  </div>
 </Base>
 
-<script>
-  const input = document.querySelector('#q') as HTMLInputElement;
-  const items = [...document.querySelectorAll<HTMLElement>('#list [data-search]')];
-  const empty = document.querySelector('#empty') as HTMLElement;
-  const chips = [...document.querySelectorAll<HTMLButtonElement>('#tags .chip')];
+<style>
+  .view-switch {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 20px 0 16px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 14px;
+  }
 
-  function apply(raw: string) {
-    const q = raw.trim().toLowerCase();
-    let shown = 0;
-    for (const item of items) {
-      const hit = !q || (item.dataset.search ?? '').includes(q);
-      item.hidden = !hit;
-      if (hit) shown += 1;
+  .switch-btn {
+    padding: 7px 16px;
+    border: 1px solid var(--line);
+    background: var(--bg-raised);
+    color: var(--muted);
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .switch-btn:hover {
+    color: var(--ink);
+    border-color: var(--muted);
+  }
+
+  .switch-btn.active {
+    background: var(--ink);
+    color: var(--bg);
+    border-color: var(--ink);
+  }
+</style>
+
+<script>
+  // 选项卡切换逻辑
+  const switchBtns = document.querySelectorAll<HTMLButtonElement>('.switch-btn');
+  const viewPanes = document.querySelectorAll<HTMLElement>('.view-pane');
+  const input = document.querySelector('#q') as HTMLInputElement;
+
+  let currentView = 'view-notes';
+
+  function activateView(targetId: string, updateHash = true) {
+    currentView = targetId;
+    switchBtns.forEach((btn) => {
+      const active = btn.dataset.target === targetId;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-selected', String(active));
+    });
+
+    viewPanes.forEach((pane) => {
+      pane.hidden = pane.id !== targetId;
+    });
+
+    if (updateHash) {
+      const hash = targetId === 'view-industry' ? '#industry' : '#notes';
+      history.replaceState(null, '', hash);
     }
-    empty.hidden = shown !== 0;
-    for (const chip of chips) {
-      chip.setAttribute('aria-pressed', String(chip.dataset.tag === raw));
+
+    applySearch(input.value);
+  }
+
+  switchBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const target = btn.dataset.target;
+      if (target) activateView(target);
+    });
+  });
+
+  // URL hash 检测
+  if (window.location.hash === '#industry' || window.location.search.includes('tab=industry')) {
+    activateView('view-industry', false);
+  }
+
+  // 笔记搜索
+  const noteItems = [...document.querySelectorAll<HTMLElement>('#list [data-search]')];
+  const noteEmpty = document.querySelector('#empty') as HTMLElement;
+  const noteChips = [...document.querySelectorAll<HTMLButtonElement>('#tags .chip')];
+
+  // 行业专栏搜索与筛选
+  const filterChips = document.querySelectorAll<HTMLButtonElement>('#industry-filters .filter-chip');
+  const groupCards = document.querySelectorAll<HTMLElement>('.group-card');
+  const etfRows = document.querySelectorAll<HTMLElement>('.etf-row');
+  const industryEmpty = document.querySelector('#empty-industry') as HTMLElement;
+
+  let activeGroupId = 'all';
+
+  function applySearch(raw: string) {
+    const q = raw.trim().toLowerCase();
+
+    if (currentView === 'view-notes') {
+      let shown = 0;
+      for (const item of noteItems) {
+        const hit = !q || (item.dataset.search ?? '').includes(q);
+        item.hidden = !hit;
+        if (hit) shown += 1;
+      }
+      if (noteEmpty) noteEmpty.hidden = shown !== 0;
+      for (const chip of noteChips) {
+        chip.setAttribute('aria-pressed', String(chip.dataset.tag === raw));
+      }
+    } else {
+      let totalVisibleETF = 0;
+
+      groupCards.forEach((card) => {
+        const cardGroupId = card.dataset.groupId;
+        const groupMatch = activeGroupId === 'all' || cardGroupId === activeGroupId;
+
+        if (!groupMatch) {
+          card.hidden = true;
+          return;
+        }
+
+        const rows = card.querySelectorAll<HTMLElement>('.etf-row');
+        let visibleRowsInGroup = 0;
+
+        rows.forEach((row) => {
+          const rowSearch = row.dataset.search || '';
+          const hit = !q || rowSearch.includes(q);
+          row.hidden = !hit;
+          if (hit) {
+            visibleRowsInGroup += 1;
+            totalVisibleETF += 1;
+          }
+        });
+
+        card.hidden = visibleRowsInGroup === 0;
+      });
+
+      if (industryEmpty) industryEmpty.hidden = totalVisibleETF !== 0;
     }
   }
 
-  input.addEventListener('input', () => apply(input.value));
-  for (const chip of chips) {
+  input.addEventListener('input', () => applySearch(input.value));
+
+  for (const chip of noteChips) {
     chip.addEventListener('click', () => {
       const tag = chip.dataset.tag ?? '';
       input.value = input.value === tag ? '' : tag;
-      apply(input.value);
+      applySearch(input.value);
     });
   }
+
+  filterChips.forEach((chip) => {
+    chip.addEventListener('click', () => {
+      filterChips.forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+      activeGroupId = chip.dataset.group || 'all';
+      applySearch(input.value);
+    });
+  });
 </script>

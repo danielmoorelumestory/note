@@ -1,0 +1,310 @@
+---
+import { industryGroups, totalETFCount } from '../lib/industry-etf';
+---
+
+<section class="industry-section" id="industry-section">
+  <div class="industry-header">
+    <div class="industry-title-wrap">
+      <h2 class="industry-title">行业研究自选池</h2>
+      <p class="industry-desc">
+        共收录 7 大主题单元、{totalETFCount} 只精选代表性 ETF。涵盖核心资产与细分赛道工具，支持按赛道与代码检索。
+      </p>
+    </div>
+  </div>
+
+  <div class="industry-filters" id="industry-filters" role="tablist">
+    <button class="filter-chip active" type="button" data-group="all">
+      全部 ({totalETFCount})
+    </button>
+    {
+      industryGroups.map((group) => (
+        <button class="filter-chip" type="button" data-group={group.id}>
+          {group.index} {group.name} ({group.count})
+        </button>
+      ))
+    }
+  </div>
+
+  <div class="groups-container" id="groups-container">
+    {
+      industryGroups.map((group) => (
+        <div class="group-card" data-group-id={group.id}>
+          <div class="group-header">
+            <div class="group-heading">
+              <span class="group-index">{group.index}</span>
+              <h3 class="group-name">{group.name}</h3>
+            </div>
+            <span class="group-count">{group.count} 只标的</span>
+          </div>
+
+          <div class="table-wrap">
+            <table class="etf-table">
+              <thead>
+                <tr>
+                  <th style="width: 100px;">代码</th>
+                  <th style="width: 170px;">名称</th>
+                  <th style="width: 150px;">细分赛道</th>
+                  <th style="width: 100px;">市场</th>
+                  <th>投研备忘 / 关键特征</th>
+                </tr>
+              </thead>
+              <tbody>
+                {group.items.map((item) => {
+                  const isWarning = item.remark.includes('⚠️');
+                  const searchStr = `${item.code} ${item.name} ${item.subTheme} ${item.market} ${item.remark}`.toLowerCase();
+                  return (
+                    <tr class="etf-row" data-search={searchStr}>
+                      <td class="col-code">
+                        <code class="code-badge">{item.code}</code>
+                      </td>
+                      <td class="col-name">
+                        <span class="etf-name">{item.name}</span>
+                      </td>
+                      <td class="col-theme">
+                        <span class="sub-theme">{item.subTheme}</span>
+                      </td>
+                      <td class="col-market">
+                        <span class="market-tag">{item.market}</span>
+                      </td>
+                      <td class={`col-remark ${isWarning ? 'has-warning' : ''}`}>
+                        <div class="remark-text">{item.remark}</div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))
+    }
+  </div>
+  <p class="empty-industry" id="empty-industry" hidden>未找到符合条件的行业 ETF 标的。</p>
+</section>
+
+<style>
+  .industry-section {
+    margin-top: 16px;
+  }
+
+  .industry-header {
+    margin-bottom: 20px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .industry-title {
+    margin: 0 0 6px;
+    font-family: var(--serif);
+    font-size: 24px;
+    font-weight: 500;
+  }
+
+  .industry-desc {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .industry-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+
+  .filter-chip {
+    padding: 4px 12px;
+    border: 1px solid var(--line);
+    background: var(--bg-raised);
+    color: var(--muted);
+    border-radius: 999px;
+    font-size: 13px;
+    font-family: var(--sans);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+
+  .filter-chip:hover {
+    color: var(--ink);
+    border-color: var(--muted);
+  }
+
+  .filter-chip.active {
+    background: var(--ink);
+    color: var(--bg);
+    border-color: var(--ink);
+    font-weight: 500;
+  }
+
+  .groups-container {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+
+  .group-card {
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    transition: border-color 0.2s ease;
+  }
+
+  .group-card:hover {
+    border-color: #cbbeaf;
+  }
+
+  .group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    background: rgba(227, 217, 204, 0.25);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .group-heading {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .group-index {
+    font-size: 16px;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  .group-name {
+    margin: 0;
+    font-family: var(--serif);
+    font-size: 19px;
+    font-weight: 500;
+    color: var(--ink);
+  }
+
+  .group-count {
+    font-size: 12px;
+    color: var(--muted);
+    background: var(--code-bg);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+  }
+
+  .etf-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+    text-align: left;
+  }
+
+  .etf-table th {
+    padding: 10px 16px;
+    background: rgba(243, 239, 230, 0.5);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 500;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+
+  .etf-row {
+    border-bottom: 1px solid var(--line);
+    transition: background-color 0.12s ease;
+  }
+
+  .etf-row:last-child {
+    border-bottom: none;
+  }
+
+  .etf-row:hover {
+    background: rgba(243, 239, 230, 0.4);
+  }
+
+  .etf-row td {
+    padding: 12px 16px;
+    vertical-align: top;
+  }
+
+  .code-badge {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 4px;
+    letter-spacing: 0.02em;
+  }
+
+  .etf-name {
+    font-family: var(--serif);
+    font-weight: 500;
+    color: var(--ink);
+    font-size: 14.5px;
+    display: inline-block;
+  }
+
+  .sub-theme {
+    display: inline-block;
+    padding: 1px 7px;
+    font-size: 12px;
+    background: rgba(140, 58, 47, 0.08);
+    color: var(--accent);
+    border-radius: 4px;
+    border: 1px solid rgba(140, 58, 47, 0.18);
+  }
+
+  .market-tag {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .remark-text {
+    color: var(--muted);
+    line-height: 1.5;
+    font-size: 13px;
+  }
+
+  .col-remark.has-warning .remark-text {
+    color: #8c4e03;
+    background: rgba(224, 159, 62, 0.1);
+    padding: 4px 8px;
+    border-radius: 4px;
+    border-left: 2px solid #c97a18;
+  }
+
+  .empty-industry {
+    text-align: center;
+    padding: 32px 0;
+    color: var(--muted);
+  }
+
+  @media (max-width: 720px) {
+    .etf-table th:nth-child(4),
+    .etf-table td:nth-child(4) {
+      display: none;
+    }
+  }
+
+  @media (max-width: 540px) {
+    .etf-table th:nth-child(3),
+    .etf-table td:nth-child(3) {
+      display: none;
+    }
+
+    .group-header {
+      padding: 10px 14px;
+    }
+
+    .etf-row td {
+      padding: 10px 12px;
+    }
+  }
+</style>

@@ -47,6 +47,20 @@ const notes = (await visibleNotes()).slice(0, 6);
 
   <section class="section">
     <div class="section-head">
+      <h2>行业研究专栏</h2>
+      <a href={href('notes#industry')}>进入专栏</a>
+    </div>
+    <div class="industry-banner">
+      <a href={href('notes#industry')}>
+        <span class="banner-badge">7 大主题单元 · 59 只精选标的</span>
+        <h3>TMT科技 / 医药医疗 / 大消费 / 高端制造 / 周期资源 / 金融基建 / 农业周期</h3>
+        <p class="summary">包含细分赛道代表工具、规模与流动性指标，以及第一大成分股权重与集中度风险警示。</p>
+      </a>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
       <h2>实验</h2>
       <a href={href('lab')}>全部</a>
     </div>
@@ -64,3 +78,41 @@ const notes = (await visibleNotes()).slice(0, 6);
     </ul>
   </section>
 </Base>
+
+<style>
+  .industry-banner a {
+    display: block;
+    padding: 20px;
+    background: var(--bg-raised);
+    border: 1px solid var(--line);
+    text-decoration: none;
+    border-radius: 6px;
+    transition: border-color 0.2s ease;
+  }
+
+  .industry-banner a:hover {
+    border-color: var(--ink);
+  }
+
+  .banner-badge {
+    display: inline-block;
+    font-size: 12px;
+    color: var(--accent);
+    background: rgba(140, 58, 47, 0.08);
+    border: 1px solid rgba(140, 58, 47, 0.2);
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-bottom: 8px;
+    font-weight: 500;
+  }
+
+  .industry-banner h3 {
+    margin: 0 0 6px;
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--ink);
+    line-height: 1.4;
+  }
+</style>
+
