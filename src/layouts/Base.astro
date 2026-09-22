@@ -1,4 +1,5 @@
 ---
+import '@picocss/pico/css/pico.classless.blue.min.css';
 import '../styles/global.css';
 import { href } from '../lib/url';
 
@@ -22,8 +23,8 @@ const pageTitle = title ? `${title} · 记` : '记 · 笔记与行业研究';
     <title>{pageTitle}</title>
   </head>
   <body>
-    <div class="top-wrap">
-      <header class="top shell">
+    <header class="site-header">
+      <div class="top">
         <a class="brand" href={href()}>
           <span class="brand-icon">记</span>
           <span class="brand-title">记</span>
@@ -34,24 +35,22 @@ const pageTitle = title ? `${title} · 记` : '记 · 笔记与行业研究';
           <a href={href('notes#industry')} class="nav-highlight">行业专栏</a>
           <a href={href('lab')} aria-current={current === 'lab' ? 'page' : undefined}>实验</a>
         </nav>
-      </header>
-    </div>
-    <div class="shell">
-      <main>
-        <slot />
-      </main>
-      <footer class="foot">
-        <div class="foot-inner">
-          <div>
-            <div class="foot-brand">记 · 个人随笔与行业研究自选池</div>
-            <p class="foot-desc">静态站构建，推到 main 自动发布到 GitHub Pages。</p>
-          </div>
-          <div class="foot-links">
-            <a href="https://github.com/danielmoorelumestory/note" target="_blank" rel="noopener">GitHub 仓库</a>
-            <a href={href('rss.xml')}>RSS</a>
-          </div>
+      </div>
+    </header>
+    <main>
+      <slot />
+    </main>
+    <footer class="site-footer">
+      <div class="foot-inner">
+        <div>
+          <div class="foot-brand">记 · 个人随笔与行业研究自选池</div>
+          <p class="foot-desc">静态站构建，推到 main 自动发布到 GitHub Pages。</p>
         </div>
-      </footer>
-    </div>
+        <div class="foot-links">
+          <a href="https://github.com/danielmoorelumestory/note" target="_blank" rel="noopener">GitHub 仓库</a>
+          <a href={href('rss.xml')}>RSS</a>
+        </div>
+      </div>
+    </footer>
   </body>
 </html>

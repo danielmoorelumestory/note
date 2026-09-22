@@ -161,7 +161,7 @@ import { href } from '../lib/url';
   }
 
   .group-card:hover {
-    border-color: rgba(30, 27, 24, 0.25);
+    border-color: var(--accent);
     box-shadow: var(--shadow-md);
   }
 
@@ -215,7 +215,7 @@ import { href } from '../lib/url';
 
   .etf-table th {
     padding: 10px 16px;
-    background: rgba(243, 239, 230, 0.5);
+    background: var(--bg-raised);
     color: var(--muted);
     font-size: 12px;
     font-weight: 500;
@@ -233,7 +233,7 @@ import { href } from '../lib/url';
   }
 
   .etf-row:hover {
-    background: rgba(243, 239, 230, 0.4);
+    background: var(--bg-raised);
   }
 
   .etf-row td {
@@ -265,10 +265,10 @@ import { href } from '../lib/url';
     display: inline-block;
     padding: 1px 7px;
     font-size: 12px;
-    background: rgba(140, 58, 47, 0.08);
+    background: var(--accent-light);
     color: var(--accent);
     border-radius: 4px;
-    border: 1px solid rgba(140, 58, 47, 0.18);
+    border: 1px solid var(--line);
   }
 
   .market-tag {
@@ -283,11 +283,11 @@ import { href } from '../lib/url';
   }
 
   .col-remark.has-warning .remark-text {
-    color: #8c4e03;
-    background: rgba(224, 159, 62, 0.1);
+    color: var(--ink);
+    background: var(--bg-raised);
     padding: 4px 8px;
     border-radius: 4px;
-    border-left: 2px solid #c97a18;
+    border-left: 2px solid var(--accent);
   }
 
   .reference-badge-wrap {
@@ -300,8 +300,8 @@ import { href } from '../lib/url';
     font-size: 12px;
     font-weight: 500;
     color: var(--accent);
-    background: rgba(140, 58, 47, 0.08);
-    border: 1px solid rgba(140, 58, 47, 0.2);
+    background: var(--accent-light);
+    border: 1px solid var(--line);
     padding: 3px 8px;
     border-radius: 4px;
     text-decoration: none;
