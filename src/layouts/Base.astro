@@ -1,5 +1,4 @@
 ---
-import 'latex.css/style.css';
 import '../styles/global.css';
 import { href } from '../lib/url';
 
@@ -22,9 +21,9 @@ const pageTitle = title ? `${title} · 记` : '记 · 笔记与行业研究';
     <link rel="alternate" type="application/rss+xml" title="记" href={href('rss.xml')} />
     <title>{pageTitle}</title>
   </head>
-  <body>
+  <body class="min-h-screen bg-slate-50 text-slate-900 antialiased">
     <header class="site-header">
-      <div class="top">
+      <div class="top mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
         <a class="brand" href={href()}>
           <span class="brand-icon">记</span>
           <span class="brand-title">记</span>
@@ -37,11 +36,11 @@ const pageTitle = title ? `${title} · 记` : '记 · 笔记与行业研究';
         </nav>
       </div>
     </header>
-    <main>
+    <main class="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
       <slot />
     </main>
     <footer class="site-footer">
-      <div class="foot-inner">
+      <div class="foot-inner mx-auto flex max-w-5xl flex-wrap items-start justify-between gap-4 px-4 py-8 sm:px-6">
         <div>
           <div class="foot-brand">记 · 个人随笔与行业研究自选池</div>
           <p class="foot-desc">静态站构建，推到 main 自动发布到 GitHub Pages。</p>

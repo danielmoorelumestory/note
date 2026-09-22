@@ -1,4 +1,5 @@
 import { defineConfig } from 'astro/config';
+import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   site: 'https://danielmoorelumestory.github.io',
@@ -9,9 +10,6 @@ export default defineConfig({
     },
   },
   vite: {
-    build: {
-      // latex.css 字体较大，禁止内联进 CSS，避免单文件数 MB
-      assetsInlineLimit: 0,
-    },
+    plugins: [tailwindcss()],
   },
 });
