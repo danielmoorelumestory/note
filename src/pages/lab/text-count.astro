@@ -1,0 +1,37 @@
+---
+import Base from '../../layouts/Base.astro';
+---
+
+<Base title="字数统计" current="lab" description="本地统计字符、去空白和行数">
+  <header class="hero">
+    <h1>字数统计</h1>
+    <p class="lede">只在这个页面里算。没有请求，没有存储。</p>
+  </header>
+  <div class="tool">
+    <textarea id="box" placeholder="贴进来"></textarea>
+    <div class="stats">
+      <div><strong id="chars">0</strong><span>字符</span></div>
+      <div><strong id="chars-nospace">0</strong><span>去空白</span></div>
+      <div><strong id="lines">0</strong><span>行</span></div>
+      <div><strong id="cjk">0</strong><span>汉字</span></div>
+    </div>
+  </div>
+</Base>
+
+<script>
+  const box = document.querySelector('#box') as HTMLTextAreaElement;
+  const chars = document.querySelector('#chars') as HTMLElement;
+  const charsNoSpace = document.querySelector('#chars-nospace') as HTMLElement;
+  const lines = document.querySelector('#lines') as HTMLElement;
+  const cjk = document.querySelector('#cjk') as HTMLElement;
+
+  function count() {
+    const text = box.value;
+    chars.textContent = String([...text].length);
+    charsNoSpace.textContent = String([...text.replace(/\s/g, '')].length);
+    lines.textContent = String(text === '' ? 0 : text.split(/\r\n|\r|\n/).length);
+    cjk.textContent = String(text.match(/\p{Script=Han}/gu)?.length ?? 0);
+  }
+
+  box.addEventListener('input', count);
+</script>

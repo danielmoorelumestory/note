@@ -1,0 +1,11 @@
+---
+import Base from '../layouts/Base.astro';
+import { href } from '../lib/url';
+---
+
+<Base title="找不到">
+  <header class="hero">
+    <h1>这页不存在。</h1>
+    <p class="lede"><a href={href()}>回首页</a></p>
+  </header>
+</Base>

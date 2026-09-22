@@ -1,0 +1,26 @@
+---
+import Base from '../../layouts/Base.astro';
+import { href } from '../../lib/url';
+import { labs } from '../../lib/labs';
+---
+
+<Base title="实验" current="lab" description="浏览器里跑的小功能">
+  <header class="hero">
+    <h1>实验</h1>
+    <p class="lede">
+      每个功能一个页面。复制 <code>text-count.astro</code>，再往 <code>src/lib/labs.ts</code> 加一条。
+    </p>
+  </header>
+  <ul class="lab-grid section">
+    {
+      labs.map((lab) => (
+        <li>
+          <a href={href(`lab/${lab.slug}`)}>
+            <h3>{lab.title}</h3>
+            <p class="summary">{lab.summary}</p>
+          </a>
+        </li>
+      ))
+    }
+  </ul>
+</Base>

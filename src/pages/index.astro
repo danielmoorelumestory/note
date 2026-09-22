@@ -1,0 +1,66 @@
+---
+import Base from '../layouts/Base.astro';
+import { href } from '../lib/url';
+import { formatDate, visibleNotes } from '../lib/notes';
+import { labs } from '../lib/labs';
+
+const notes = (await visibleNotes()).slice(0, 6);
+---
+
+<Base description="笔记和能跑的小页面，推 main 就上线。">
+  <header class="hero">
+    <p class="kicker">本地写，GitHub Pages 发</p>
+    <h1>笔记和能跑的小页面，都放这里。</h1>
+    <p class="lede">
+      笔记是 <code>src/content/notes</code> 里的 Markdown。功能页是
+      <code>src/pages/lab</code> 里的 Astro 页面。推到 <code>main</code> 就发到
+      <a href="https://danielmoorelumestory.github.io/note/">Pages</a>。
+    </p>
+  </header>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>最近</h2>
+      <a href={href('notes')}>全部</a>
+    </div>
+    <ul class="note-list">
+      {
+        notes.map((note) => (
+          <li>
+            <a href={href(`notes/${note.id}`)}>
+              <time class="date" datetime={note.data.date.toISOString()}>
+                {formatDate(note.data.date)}
+              </time>
+              <div>
+                <div class="title">
+                  {note.data.title}
+                  {note.data.draft && <span class="draft">草稿</span>}
+                </div>
+                {note.data.summary && <p class="summary">{note.data.summary}</p>}
+              </div>
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2>实验</h2>
+      <a href={href('lab')}>全部</a>
+    </div>
+    <ul class="lab-grid">
+      {
+        labs.map((lab) => (
+          <li>
+            <a href={href(`lab/${lab.slug}`)}>
+              <h3>{lab.title}</h3>
+              <p class="summary">{lab.summary}</p>
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+  </section>
+</Base>

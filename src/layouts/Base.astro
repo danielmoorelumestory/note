@@ -1,0 +1,41 @@
+---
+import '../styles/global.css';
+import { href } from '../lib/url';
+
+interface Props {
+  title?: string;
+  description?: string;
+  current?: 'notes' | 'lab';
+}
+
+const { title, description = '笔记和能跑的小页面。', current } = Astro.props;
+const pageTitle = title ? `${title} · 记` : '记';
+---
+
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <link rel="icon" href={href('favicon.svg')} />
+    <link rel="alternate" type="application/rss+xml" title="记" href={href('rss.xml')} />
+    <title>{pageTitle}</title>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="top">
+        <a class="brand" href={href()}>记</a>
+        <nav class="nav">
+          <a href={href('notes')} aria-current={current === 'notes' ? 'page' : undefined}>笔记</a>
+          <a href={href('lab')} aria-current={current === 'lab' ? 'page' : undefined}>实验</a>
+        </nav>
+      </header>
+      <main>
+        <slot />
+      </main>
+      <footer class="foot">
+        <a href="https://github.com/danielmoorelumestory/note">danielmoorelumestory/note</a>
+      </footer>
+    </div>
+  </body>
+</html>

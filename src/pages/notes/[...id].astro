@@ -1,0 +1,40 @@
+---
+import { render } from 'astro:content';
+import Base from '../../layouts/Base.astro';
+import { formatDate, visibleNotes } from '../../lib/notes';
+
+export async function getStaticPaths() {
+  const notes = await visibleNotes();
+  return notes.map((note) => ({
+    params: { id: note.id },
+    props: { note },
+  }));
+}
+
+const { note } = Astro.props;
+const { Content } = await render(note);
+---
+
+<Base title={note.data.title} current="notes" description={note.data.summary || note.data.title}>
+  <article>
+    <header class="article-head">
+      <p class="meta">
+        <time datetime={note.data.date.toISOString()}>{formatDate(note.data.date)}</time>
+        {note.data.draft && <span class="draft">草稿</span>}
+      </p>
+      <h1>{note.data.title}</h1>
+      {note.data.summary && <p class="lede">{note.data.summary}</p>}
+      {
+        note.data.tags.length > 0 && (
+          <div class="tags">
+            {note.data.tags.map((tag) => <span class="tag">{tag}</span>)}
+          </div>
+        )
+      }
+    </header>
+    <div class="prose section">
+      <Content />
+    </div>
+    <p class="path">src/content/notes/{note.id}.md</p>
+  </article>
+</Base>
