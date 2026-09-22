@@ -8,8 +8,8 @@
     "preview": "astro preview"
   },
   "dependencies": {
-    "@picocss/pico": "^2.1.1",
-    "astro": "^7.3.3"
+    "astro": "^7.3.3",
+    "latex.css": "^1.14.0"
   },
   "engines": {
     "node": ">=22.12.0"

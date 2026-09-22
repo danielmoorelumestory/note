@@ -1,30 +1,33 @@
-/* Pico classless blue 之上的站点补丁：结构 / 列表 / TOC / lab */
+/* latex.css 之上的站点补丁：壳层 / 列表 / TOC / lab */
 
 :root {
-  --bg: var(--pico-background-color);
-  --bg-raised: var(--pico-card-sectioning-background-color);
-  --bg-card: var(--pico-card-background-color);
-  --ink: var(--pico-color);
-  --muted: var(--pico-muted-color);
-  --line: var(--pico-muted-border-color);
-  --line-subtle: var(--pico-muted-border-color);
-  --accent: var(--pico-primary);
-  --accent-light: var(--pico-primary-focus);
-  --code-bg: var(--pico-code-background-color);
-  --sans: var(--pico-font-family-sans-serif);
-  --mono: var(--pico-font-family-monospace);
-  --serif: var(--pico-font-family-sans-serif);
-  --radius-xs: 4px;
-  --radius-sm: var(--pico-border-radius);
-  --radius-md: 0.5rem;
-  --radius-lg: 0.75rem;
-  --shadow-sm: var(--pico-card-box-shadow);
-  --shadow-md: var(--pico-card-box-shadow);
-  --shadow-lg: var(--pico-card-box-shadow);
+  --bg: var(--body-bg-color);
+  --bg-raised: var(--pre-bg-color);
+  --bg-card: var(--body-bg-color);
+  --ink: var(--body-color);
+  --muted: color-mix(in srgb, var(--body-color) 62%, var(--body-bg-color));
+  --line: var(--table-border-color);
+  --line-subtle: color-mix(in srgb, var(--table-border-color) 35%, var(--body-bg-color));
+  --accent: #0b57d0;
+  --accent-light: color-mix(in srgb, #0b57d0 14%, var(--body-bg-color));
+  --code-bg: var(--pre-bg-color);
+  --sans: 'Latin Modern', 'Libertinus', 'Songti SC', 'STSong', 'Noto Serif SC', Georgia, serif;
+  --serif: var(--sans);
+  --mono: Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  --radius-xs: 2px;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
 }
 
-html {
-  scroll-behavior: smooth;
+/* 中文研报可读：衬线 + CJK 回退；略放宽栏宽以容纳站点壳 */
+body {
+  font-family: 'Latin Modern', 'Libertinus', 'Songti SC', 'STSong', 'Noto Serif SC', Georgia, Cambria,
+    'Times New Roman', Times, serif;
+  max-width: 88ch;
 }
 
 /* —— 顶栏 —— */
@@ -32,11 +35,12 @@ html {
   position: sticky;
   top: 0;
   z-index: 100;
-  background: color-mix(in srgb, var(--pico-background-color) 92%, transparent);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--pico-muted-border-color);
-  padding-block: 0;
+  margin: -2rem -1.25rem 1.5rem;
+  padding: 0.75rem 1.25rem;
+  background: color-mix(in srgb, var(--body-bg-color) 94%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-bottom: var(--border-width-thin) solid var(--line-subtle);
 }
 
 .site-header .top {
@@ -44,102 +48,94 @@ html {
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
-  padding-block: 0.65rem;
 }
 
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.55rem;
   text-decoration: none;
-  color: var(--pico-color);
-  font-weight: 600;
+  color: var(--body-color);
+  font-weight: bold;
 }
 
 .brand-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2rem;
-  height: 2rem;
-  background: var(--pico-primary);
-  color: var(--pico-primary-inverse);
-  border-radius: var(--pico-border-radius);
-  font-size: 0.9rem;
+  width: 1.6rem;
+  height: 1.6rem;
+  border: var(--border-width-thin) solid var(--body-color);
+  font-size: 0.85rem;
 }
 
 .brand-title {
-  font-size: 1.1rem;
+  font-size: 1.05rem;
 }
 
 .brand-tag {
   font-size: 0.7rem;
-  font-weight: 500;
-  color: var(--pico-muted-color);
-  background: var(--pico-code-background-color);
-  padding: 0.1rem 0.4rem;
-  border-radius: var(--pico-border-radius);
+  font-weight: normal;
+  color: var(--muted);
+  border: var(--border-width-thin) solid var(--line-subtle);
+  padding: 0.05rem 0.35rem;
 }
 
-/* Pico classless 假设 nav > ul > li；我们是扁平 a */
 .nav {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.35rem;
+  gap: 0.15rem 0.75rem;
   margin: 0;
 }
 
 .nav a {
-  display: inline-block;
-  padding: 0.35rem 0.75rem;
-  border-radius: var(--pico-border-radius);
   text-decoration: none;
-  color: var(--pico-muted-color);
-  font-size: 0.9rem;
-  font-weight: 500;
+  color: var(--muted);
+  font-size: 0.92rem;
+  border-bottom: var(--border-width-thin) solid transparent;
 }
 
 .nav a:hover {
-  color: var(--pico-color);
-  background: var(--pico-code-background-color);
+  color: var(--body-color);
+  border-bottom-color: var(--body-color);
 }
 
-.nav a[aria-current="page"] {
-  color: var(--pico-primary-inverse);
-  background: var(--pico-primary);
+.nav a[aria-current='page'] {
+  color: var(--body-color);
+  border-bottom-color: var(--body-color);
+  font-weight: bold;
 }
 
 .nav-highlight {
-  color: var(--pico-primary) !important;
+  color: var(--accent) !important;
 }
 
 /* —— 页脚 —— */
 .site-footer {
-  margin-top: 2rem;
-  padding-block: 1.5rem 2.5rem;
-  border-top: 1px solid var(--pico-muted-border-color);
-  color: var(--pico-muted-color);
-  font-size: 0.875rem;
+  margin-top: 2.5rem;
+  padding-top: 1.25rem;
+  border-top: var(--border-width-thin) solid var(--body-color);
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .foot-inner {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 1rem;
 }
 
 .foot-brand {
-  font-weight: 600;
-  color: var(--pico-color);
+  font-weight: bold;
+  color: var(--body-color);
 }
 
 .foot-desc {
   margin: 0.25rem 0 0;
-  font-size: 0.8rem;
-  color: var(--pico-muted-color);
+  font-size: 0.85rem;
 }
 
 .foot-links {
@@ -153,31 +149,33 @@ html {
 }
 
 .hero h1 {
-  margin: 0.4rem 0 0.75rem;
+  margin: 0.35rem 0 0.75rem;
 }
 
 .kicker,
 .section-head span,
 .meta,
 .path {
-  color: var(--pico-muted-color);
-  font-size: 0.85rem;
+  color: var(--muted);
+  font-size: 0.9rem;
 }
 
 .lede {
-  max-width: 44rem;
-  color: var(--pico-muted-color);
+  max-width: 42rem;
+  color: var(--muted);
 }
 
 .section {
-  margin-top: 2.5rem;
+  margin-top: 2.25rem;
 }
 
 .section-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.6rem;
+  border-bottom: var(--border-width-thin) solid var(--body-color);
+  padding-bottom: 0.25rem;
 }
 
 .section-head h2 {
@@ -193,56 +191,56 @@ html {
 }
 
 .note-list li {
-  border-top: 1px solid var(--pico-muted-border-color);
+  border-top: var(--border-width-thin) solid var(--line-subtle);
 }
 
 .note-list a {
   display: grid;
-  grid-template-columns: 100px 1fr;
-  gap: 1rem;
-  padding: 1rem 0.35rem;
+  grid-template-columns: 6.5rem 1fr;
+  gap: 0.85rem;
+  padding: 0.85rem 0.15rem;
   text-decoration: none;
   color: inherit;
 }
 
 .note-list a:hover .title {
-  color: var(--pico-primary);
+  text-decoration: underline;
 }
 
 .note-list .date {
-  color: var(--pico-muted-color);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
   font-size: 0.85rem;
-  padding-top: 0.2rem;
-  font-family: var(--pico-font-family-monospace);
+  padding-top: 0.15rem;
+  font-family: var(--mono);
 }
 
 .title {
-  font-size: 1.15rem;
-  font-weight: 600;
+  font-size: 1.1rem;
+  font-weight: bold;
   line-height: 1.35;
 }
 
 .summary {
-  margin: 0.35rem 0 0;
-  color: var(--pico-muted-color);
+  margin: 0.3rem 0 0;
+  color: var(--muted);
   font-size: 0.95rem;
 }
 
 .tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-top: 0.6rem;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
 }
 
 .tag,
 .chip {
-  border: 1px solid var(--pico-muted-border-color);
-  background: var(--pico-card-sectioning-background-color);
-  color: var(--pico-muted-color);
-  border-radius: 999px;
-  padding: 0.1rem 0.65rem;
+  border: var(--border-width-thin) solid var(--line-subtle);
+  background: transparent;
+  color: var(--muted);
+  border-radius: 0;
+  padding: 0.05rem 0.45rem;
   font: inherit;
   font-size: 0.8rem;
 }
@@ -251,52 +249,46 @@ html {
   cursor: pointer;
 }
 
-.chip[aria-pressed="true"],
+.chip[aria-pressed='true'],
 .chip:hover {
-  color: var(--pico-color);
-  border-color: var(--pico-color);
-  background: var(--pico-background-color);
+  color: var(--body-color);
+  border-color: var(--body-color);
 }
 
 .draft {
-  margin-left: 0.4rem;
-  color: var(--pico-primary);
-  background: var(--pico-primary-focus);
-  border: 1px solid var(--pico-primary-underline);
-  padding: 0.05rem 0.4rem;
-  border-radius: var(--pico-border-radius);
+  margin-left: 0.35rem;
+  color: var(--accent);
+  border: var(--border-width-thin) solid var(--accent);
+  padding: 0 0.3rem;
   font-size: 0.7rem;
-  font-weight: 500;
+  font-weight: normal;
 }
 
 /* —— lab 网格 —— */
 .lab-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.85rem;
 }
 
 .lab-grid a {
   display: block;
-  min-height: 8rem;
-  padding: 1.1rem;
+  min-height: 7rem;
+  padding: 0.9rem 1rem;
   text-decoration: none;
   color: inherit;
-  background: var(--pico-card-sectioning-background-color);
-  border: 1px solid var(--pico-muted-border-color);
-  border-radius: var(--pico-border-radius);
+  border: var(--border-width-thin) solid var(--body-color);
 }
 
 .lab-grid a:hover {
-  border-color: var(--pico-primary);
+  background: var(--pre-bg-color);
 }
 
 .lab-grid h3 {
-  margin: 0 0 0.4rem;
-  font-size: 1.15rem;
+  margin: 0 0 0.35rem;
+  font-size: 1.1rem;
 }
 
-/* —— 搜索 —— */
 .search {
   width: 100%;
   margin: 0.75rem 0 1rem;
@@ -306,19 +298,19 @@ html {
 .breadcrumb {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
   font-size: 0.85rem;
-  color: var(--pico-muted-color);
-  margin-bottom: 1.25rem;
+  color: var(--muted);
+  margin-bottom: 1rem;
 }
 
 .breadcrumb a {
   text-decoration: none;
-  color: var(--pico-muted-color);
+  color: var(--muted);
 }
 
 .breadcrumb a:hover {
-  color: var(--pico-primary);
+  color: var(--body-color);
 }
 
 .breadcrumb .sep {
@@ -326,106 +318,60 @@ html {
 }
 
 .breadcrumb .current {
-  color: var(--pico-color);
-  font-weight: 500;
+  color: var(--body-color);
+  font-weight: bold;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 24rem;
+  max-width: 22rem;
 }
 
+/* 学术栏宽内不做双栏 TOC，避免挤爆 80ch */
 .article-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 15rem;
-  gap: 2.5rem;
-  align-items: start;
+  display: block;
+}
+
+.article-sidebar {
+  display: none;
 }
 
 .article-main {
   min-width: 0;
 }
 
-.article-sidebar {
-  position: sticky;
-  top: 4.5rem;
-  max-height: calc(100vh - 5.5rem);
-  overflow-y: auto;
-  padding-left: 1rem;
-  border-left: 1px solid var(--pico-muted-border-color);
-}
-
-.toc-title {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: var(--pico-color);
-  letter-spacing: 0.04em;
-  margin-bottom: 0.75rem;
-  text-transform: uppercase;
-}
-
-.toc-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.toc-item {
-  text-decoration: none;
-  color: var(--pico-muted-color);
-  font-size: 0.85rem;
-  line-height: 1.45;
-  border-radius: var(--pico-border-radius);
-  padding: 0.15rem 0.35rem;
-}
-
-.toc-item.depth-3 {
-  padding-left: 1rem;
-  font-size: 0.8rem;
-  opacity: 0.9;
-}
-
-.toc-item:hover,
-.toc-item.active {
-  color: var(--pico-primary);
-  background: var(--pico-primary-focus);
-}
-
 .article-head {
-  padding-bottom: 1.25rem;
-  border-bottom: 1px solid var(--pico-muted-border-color);
-  margin-bottom: 1.75rem;
+  padding-bottom: 1rem;
+  border-bottom: var(--border-width-thin) solid var(--body-color);
+  margin-bottom: 1.5rem;
 }
 
 .article-meta-bar {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.45rem;
   font-size: 0.85rem;
-  color: var(--pico-muted-color);
-  margin-bottom: 0.5rem;
-  font-family: var(--pico-font-family-monospace);
+  color: var(--muted);
+  margin-bottom: 0.4rem;
+  font-family: var(--mono);
 }
 
 .article-title {
-  margin: 0.4rem 0 0.85rem;
-  font-size: clamp(1.75rem, 4vw, 2.4rem);
-  line-height: 1.25;
+  margin: 0.35rem 0 0.75rem;
+  font-size: clamp(1.6rem, 4vw, 2.1rem);
+  line-height: 1.3;
 }
 
 .article-summary {
-  font-size: 1.05rem;
-  line-height: 1.65;
-  color: var(--pico-muted-color);
-  margin: 0 0 0.85rem;
+  font-size: 1.02rem;
+  line-height: 1.7;
+  color: var(--muted);
+  margin: 0 0 0.75rem;
 }
 
 .prose h2,
 .prose h3,
 .prose h4 {
-  scroll-margin-top: 5rem;
+  scroll-margin-top: 4.5rem;
 }
 
 .prose table {
@@ -440,23 +386,23 @@ html {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 1rem;
-  margin-top: 2.5rem;
-  padding-top: 1.25rem;
-  border-top: 1px solid var(--pico-muted-border-color);
+  margin-top: 2.25rem;
+  padding-top: 1rem;
+  border-top: var(--border-width-thin) solid var(--body-color);
 }
 
 .source-path {
   font-size: 0.8rem;
-  color: var(--pico-muted-color);
+  color: var(--muted);
 }
 
 .source-path code {
-  margin-left: 0.35rem;
+  margin-left: 0.3rem;
 }
 
 .back-link {
-  font-size: 0.9rem;
-  font-weight: 500;
+  font-size: 0.95rem;
+  font-weight: bold;
   text-decoration: none;
 }
 
@@ -468,49 +414,37 @@ html {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(6.5rem, 1fr));
+  gap: 0.65rem;
   margin-top: 1rem;
 }
 
 .stats > div {
-  padding: 0.85rem 1rem;
-  background: var(--pico-card-sectioning-background-color);
-  border: 1px solid var(--pico-muted-border-color);
-  border-radius: var(--pico-border-radius);
+  padding: 0.7rem 0.85rem;
+  border: var(--border-width-thin) solid var(--body-color);
   text-align: center;
 }
 
 .stats strong {
   display: block;
-  font-size: 1.5rem;
+  font-size: 1.4rem;
   font-variant-numeric: tabular-nums;
 }
 
 .stats span {
-  color: var(--pico-muted-color);
+  color: var(--muted);
   font-size: 0.8rem;
-}
-
-@media (max-width: 960px) {
-  .article-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .article-sidebar {
-    display: none;
-  }
 }
 
 @media (max-width: 640px) {
   .site-header .top {
     flex-direction: column;
     align-items: flex-start;
-    gap: 0.5rem;
+    gap: 0.45rem;
   }
 
   .note-list a {
     grid-template-columns: 1fr;
-    gap: 0.25rem;
+    gap: 0.2rem;
   }
 }
