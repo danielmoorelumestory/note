@@ -47,6 +47,19 @@ const notes = (await visibleNotes()).slice(0, 6);
 
   <section class="section">
     <div class="section-head">
+      <h2>最新报告</h2>
+    </div>
+    <div class="industry-banner">
+      <a href={href('reports/2027核心主线前瞻_六张网与候选主题_20260927.html')}>
+        <span class="banner-badge">2026-09-27 · 市场前瞻</span>
+        <h3>2027年核心主线前瞻：六张网与候选主题</h3>
+        <p class="summary">从政策、订单、盈利与估值维度梳理“六张网”及 2027 年候选主线。</p>
+      </a>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
       <h2>行业研究专栏</h2>
       <a href={href('notes#industry')}>进入专栏</a>
     </div>
@@ -115,4 +128,3 @@ const notes = (await visibleNotes()).slice(0, 6);
     line-height: 1.4;
   }
 </style>
-
