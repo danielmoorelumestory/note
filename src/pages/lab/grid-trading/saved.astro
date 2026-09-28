@@ -1,0 +1,242 @@
+---
+import Base from '../../../layouts/Base.astro';
+import { href } from '../../../lib/url';
+
+const calculatorUrl = href('lab/grid-trading');
+const detailUrl = href('lab/grid-trading/detail');
+---
+
+<Base title="已保存标的" current="lab" description="已保存的网格回测结果">
+  <header class="hero compact-hero">
+    <p class="kicker">SAVED BACKTESTS</p>
+    <h1>已保存标的</h1>
+    <p class="lede">保存在当前浏览器。点击详情可查看每次建仓、买入和卖出的历史记录。</p>
+  </header>
+  <div class="actions"><a class="btn-back" href={calculatorUrl}>← 返回计算器</a><button id="clear" class="btn-clear" type="button">清空全部</button></div>
+  <div id="content-area" data-detail-url={detailUrl} data-calc-url={calculatorUrl}></div>
+</Base>
+
+<script>
+  type RecordItem = {
+    id: string;
+    savedAt: string;
+    row: {
+      name: string; code: string; date: string; initialPrice: number; initialAmount: number;
+      step: number; rebound: number; pullback: number; gridAmount: number;
+    };
+    result: {
+      current: number; lastTrade?: number; nextBuy?: number; nextSell?: number;
+      buys: number; sells: number; maxCapital: number; pnl: number; value: number;
+      realized?: number; range: string;
+      trades?: { date: string; side: string; amount?: number; capitalUsed?: number }[];
+    };
+  };
+  const key = 'grid-trading-saved-v1';
+  const container = document.querySelector('#content-area') as HTMLElement;
+  const detailUrl = container.dataset.detailUrl!;
+  const calcUrl = container.dataset.calcUrl!;
+  const format = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const formatInt = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 });
+  const money = (v: number) => `${v >= 0 ? '+' : '-'}¥${format.format(Math.abs(v))}`;
+  const price = (v?: number) => typeof v === 'number' && Number.isFinite(v) ? v.toFixed(3) : '—';
+  const lastBuyDate = (item: RecordItem) => [...(item.result.trades ?? [])].reverse().find(trade => trade.side === '买入')?.date ?? '—';
+  const currentCapital = (item: RecordItem) => {
+    const trades = item.result.trades ?? [];
+    if (!trades.length) return item.row.initialAmount;
+    let capital = 0;
+    for (const [index, trade] of trades.entries()) {
+      if (typeof trade.capitalUsed === 'number') capital = trade.capitalUsed;
+      else if (index === 0) capital = trade.amount ?? item.row.initialAmount;
+      else capital += trade.side === '买入' ? (trade.amount ?? 0) : -(trade.amount ?? 0);
+    }
+    return capital;
+  };
+  type SortField = 'last-buy' | 'capital' | 'pnl';
+  let sortField: SortField | null = null;
+  let sortOrder: 'asc' | 'desc' = 'desc';
+  const sortMark = (field: SortField) => sortField === field ? (sortOrder === 'asc' ? ' ↑' : ' ↓') : '';
+
+  function read(): RecordItem[] { try { return JSON.parse(localStorage.getItem(key) ?? '[]'); } catch { return []; } }
+
+  function render() {
+    const records = read();
+    if (!records.length) {
+      container.innerHTML = `
+        <div class="empty">
+          <div class="empty-icon">📊</div>
+          <h3>暂无已保存的回测记录</h3>
+          <p>在网格交易计算器完成回测后，点击标的行右侧的“保存”即可将结果存入此处。</p>
+          <a class="button" href="${calcUrl}">去计算器回测</a>
+        </div>
+      `;
+      return;
+    }
+    container.innerHTML = `
+      <div class="table-shell">
+        <table class="grid-table">
+          <thead>
+            <tr>
+              <th>代码</th>
+              <th>名称</th>
+              <th>建仓时间</th>
+              <th><button class="sort-button" data-sort="last-buy" type="button">上次买入时间${sortMark('last-buy')}</button></th>
+              <th>初始买入价</th>
+              <th>初始金额</th>
+              <th>网格步长</th>
+              <th>反弹买入</th>
+              <th>回落卖出</th>
+              <th>每格金额</th>
+              <th>当前价格</th>
+              <th>上次成交价</th>
+              <th>预计下次买入</th>
+              <th>预计下次卖出</th>
+              <th>买 / 卖次数</th>
+              <th><button class="sort-button" data-sort="capital" type="button">当前使用本金${sortMark('capital')}</button></th>
+              <th><button class="sort-button" data-sort="pnl" type="button">盈亏金额${sortMark('pnl')}</button></th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${[...records].sort((a, b) => {
+              if (!sortField) return 0;
+              if (sortField === 'last-buy') {
+                const aDate = lastBuyDate(a), bDate = lastBuyDate(b);
+                if (aDate === '—' && bDate === '—') return 0;
+                if (aDate === '—') return 1;
+                if (bDate === '—') return -1;
+                return sortOrder === 'asc' ? aDate.localeCompare(bDate) : bDate.localeCompare(aDate);
+              }
+              const delta = sortField === 'capital' ? currentCapital(a) - currentCapital(b) : a.result.pnl - b.result.pnl;
+              return sortOrder === 'asc' ? delta : -delta;
+            }).map(item => `
+              <tr data-id="${item.id}">
+                <td class="code-cell">${item.row.code}</td>
+                <td class="stock-name">${item.row.name || item.row.code}</td>
+                <td>${item.row.date}</td>
+                <td>${lastBuyDate(item)}</td>
+                <td>${item.row.initialPrice}</td>
+                <td>¥${formatInt.format(item.row.initialAmount)}</td>
+                <td>${item.row.step}</td>
+                <td>${item.row.rebound}</td>
+                <td>${item.row.pullback}</td>
+                <td>¥${formatInt.format(item.row.gridAmount)}</td>
+                <td class="computed">${price(item.result.current)}</td>
+                <td class="computed">${price(item.result.lastTrade)}</td>
+                <td class="computed down">${price(item.result.nextBuy)}</td>
+                <td class="computed up">${price(item.result.nextSell)}</td>
+                <td class="computed">${item.result.buys} / ${item.result.sells}</td>
+                <td class="computed">¥${formatInt.format(currentCapital(item))}</td>
+                <td class="computed pnl ${item.result.pnl >= 0 ? 'up' : 'down'}">${money(item.result.pnl)}</td>
+                <td class="row-actions">
+                  <button class="btn-delete" data-id="${item.id}" type="button">删除</button>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  container.addEventListener('click', event => {
+    const target = event.target as HTMLElement;
+    const sortButton = target.closest('[data-sort]') as HTMLButtonElement | null;
+    if (sortButton?.dataset.sort) {
+      const field = sortButton.dataset.sort as SortField;
+      if (sortField === field) sortOrder = sortOrder === 'desc' ? 'asc' : 'desc';
+      else { sortField = field; sortOrder = 'desc'; }
+      render();
+      return;
+    }
+    const button = target.closest('.btn-delete') as HTMLButtonElement | null;
+    if (button && button.dataset.id) {
+      event.stopPropagation();
+      if (confirm('确认删除该回测记录？')) {
+        localStorage.setItem(key, JSON.stringify(read().filter(item => item.id !== button.dataset.id)));
+        render();
+      }
+      return;
+    }
+    const tr = target.closest('tbody tr') as HTMLTableRowElement | null;
+    if (tr && tr.dataset.id) {
+      window.location.href = `${detailUrl}?id=${encodeURIComponent(tr.dataset.id)}`;
+    }
+  });
+
+  document.querySelector('#clear')!.addEventListener('click', () => {
+    if (confirm('确认清空所有已保存的回测？')) {
+      localStorage.removeItem(key);
+      render();
+    }
+  });
+
+  render();
+</script>
+
+<style>
+  .compact-hero { margin-bottom: 1.4rem; }
+  .actions { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+  .btn-back, .btn-clear { border: 1px solid #cbd5e1; border-radius: 7px; padding: 7px 13px; background: #fff; color: #475569; font-size: 13px; font-weight: 500; text-decoration: none; cursor: pointer; transition: all .15s ease; }
+  .btn-back:hover { border-color: #94a3b8; color: #0f172a; background: #f8fafc; }
+  .btn-clear:hover { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
+
+  .empty { padding: 48px 24px; border: 1px dashed #cbd5e1; border-radius: 14px; background: #fff; text-align: center; }
+  .empty-icon { font-size: 38px; margin-bottom: 12px; }
+  .empty h3 { margin: 0 0 6px; font-size: 16px; font-weight: 700; color: #1e293b; }
+  .empty p { margin: 0 auto 20px; max-width: 420px; font-size: 13px; line-height: 1.6; color: #64748b; }
+  .empty .button { display: inline-flex; align-items: center; padding: 8px 18px; border-radius: 7px; background: #0369a1; color: #fff; text-decoration: none; font-size: 13px; font-weight: 600; box-shadow: 0 1px 2px rgb(15 23 42 / .1); transition: background .15s ease; }
+  .empty .button:hover { background: #0284c7; }
+</style>
+
+<style is:global>
+  .table-shell {
+    overflow-x: auto;
+    overflow-y: hidden;
+    min-height: 140px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: white;
+    box-shadow: 0 1px 3px rgb(15 23 42 / .04);
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  .table-shell::-webkit-scrollbar { height: 6px; width: 6px; }
+  .table-shell::-webkit-scrollbar-track { background: transparent; }
+  .table-shell::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
+  .table-shell::-webkit-scrollbar-thumb:hover { background-color: #94a3b8; }
+
+  .grid-table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; }
+  .grid-table th { height: 46px; padding: 12px 10px; border-bottom: 1px solid #cbd5e1; background: #f8fafc; color: #475569; font-weight: 600; white-space: nowrap; text-align: center; }
+  .grid-table td { height: 50px; padding: 8px 10px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; text-align: center; vertical-align: middle; color: #334155; font-variant-numeric: tabular-nums; }
+  .grid-table tbody tr { cursor: pointer; transition: background-color .15s ease; }
+  .grid-table tbody tr:hover { background-color: #f1f5f9; }
+  .grid-table tr:last-child td { border-bottom: 0; }
+
+  .grid-table .code-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; }
+  .grid-table .stock-name { min-width: 110px; color: #475569 !important; text-align: center; }
+  .grid-table .computed { min-width: 84px; text-align: center; }
+  .grid-table .up { color: #dc2626 !important; font-weight: 700; }
+  .grid-table .down { color: #16a34a !important; font-weight: 700; }
+
+  .grid-table .row-actions { min-width: 68px; text-align: center; }
+  .grid-table .sort-button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: inherit; cursor: pointer; }
+  .grid-table .sort-button:hover { color: #0369a1; }
+  .grid-table .btn-delete {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid #fecaca;
+    border-radius: 5px;
+    padding: 3px 9px;
+    background: #fef2f2;
+    color: #dc2626;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all .15s ease;
+  }
+  .grid-table .btn-delete:hover {
+    background: #fee2e2;
+    border-color: #fca5a5;
+  }
+</style>

@@ -1,0 +1,376 @@
+---
+import Base from '../../layouts/Base.astro';
+import { href } from '../../lib/url';
+---
+
+<Base title="网格交易计算器" current="lab" description="按历史交易日高低价模拟 ETF 和股票网格执行">
+  <header class="hero grid-hero">
+    <p class="kicker">GRID BACKTEST</p>
+    <h1>网格交易计算器</h1>
+    <p class="lede">填写建仓参数后获取历史日线；以每个交易日的最高、最低价模拟网格触发。步长、反弹买入和回落卖出均为价格数值，不是百分比。</p>
+  </header>
+
+  <section class="notice" aria-label="计算说明">
+    <span>计算口径</span>
+    <p>下跌达到步长后，价格反弹设定数值买入；上涨达到步长后，价格回落设定数值卖出。买卖佣金各按万分之 1.5；A 股卖出另计 0.05% 印花税，ETF 免印花税。日线无法确定同日高低价的先后顺序，回测按保守的跨日确认处理。</p>
+  </section>
+
+  <div class="toolbar">
+    <div id="status" role="status">准备就绪 · 默认加载沪深 300 ETF 示例</div>
+    <div class="toolbar-actions">
+      <a class="button secondary" href={href('lab/grid-trading/saved')}>已保存标的</a>
+      <button id="run-all" class="button" type="button">获取数据并回测</button>
+    </div>
+  </div>
+
+  <div class="table-shell">
+    <table class="grid-table">
+      <thead><tr>
+        <th>代码</th><th>名称</th><th>建仓时间</th><th>初始买入价</th><th>初始金额</th><th>网格步长</th><th>反弹买入</th><th>回落卖出</th><th>每格金额</th><th>当前价格</th><th>上次成交日期</th><th>上次成交价</th><th>预计下次买入</th><th>预计下次卖出</th><th>买 / 卖次数</th><th>最多使用本金</th><th>盈亏金额</th><th>操作</th>
+      </tr></thead>
+      <tbody id="grid-body"></tbody>
+    </table>
+  </div>
+
+  <section class="result-panel">
+    <div><span>选中标的回测摘要</span><strong id="summary-title">—</strong></div>
+    <div><span>历史区间</span><strong id="summary-range">—</strong></div>
+    <div><span>持仓市值</span><strong id="summary-value">—</strong></div>
+    <div><span>已实现盈亏</span><strong id="summary-realized">—</strong></div>
+  </section>
+
+  <section class="chart-panel">
+    <div class="chart-head"><div><h2>资金与收盘价变化曲线</h2><p>按每个交易日收盘价估值；收盘价与预计下次成交价使用右侧独立刻度</p></div><div class="legend"><span class="line position"></span>持仓市值 <span class="line capital"></span>占用本金 <span class="line profit"></span>总盈亏 <span class="line close"></span>收盘价 <span class="line buy-level"></span>预计买入 <span class="line sell-level"></span>预计卖出</div></div>
+    <div class="chart-scroll"><svg id="equity-chart" viewBox="0 0 920 300" role="img" aria-label="持仓市值、占用本金、总盈亏和收盘价变化曲线"><text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">完成回测后显示曲线</text></svg></div>
+  </section>
+
+  <p class="data-note">行情来源：腾讯财经公开前复权日线接口，历史价格与除权除息后的持仓成本保持可比。自动识别场内 ETF 与 A 股：买卖佣金均按成交额万分之 1.5，A 股卖出另扣 0.05% 印花税，ETF 免印花税。暂未计入最低佣金、过户费与实际成交限制。</p>
+</Base>
+
+<script>
+  type Candle = { date: string; close: number; high: number; low: number };
+  type Row = {
+    id: number; name: string; code: string; date: string; initialPrice: number; initialAmount: number;
+    step: number; rebound: number; pullback: number; gridAmount: number; candles?: Candle[];
+  };
+  type Trade = { date: string; side: '建仓' | '买入' | '卖出'; price: number; amount: number; shares: number; capitalUsed: number; pnl: number };
+  type EquityPoint = { date: string; current: number; positionValue: number; capitalUsed: number; pnl: number };
+  type Result = { current: number; lastTradeDate: string; lastTrade: number; nextBuy: number; nextSell: number; buys: number; sells: number; maxCapital: number; pnl: number; value: number; realized: number; range: string; trades: Trade[]; series: EquityPoint[] };
+  type SavedRecord = { id: string; savedAt: string; row: Omit<Row, 'candles'>; result: Result };
+
+  const body = document.querySelector('#grid-body') as HTMLTableSectionElement;
+  const status = document.querySelector('#status') as HTMLElement;
+  const feeRate = 0.00015;
+  const stockSellTaxRate = 0.0005;
+  const storageKey = 'grid-trading-saved-v1';
+  const rows: Row[] = [{ id: Date.now(), name: '沪深300ETF', code: '510300', date: '2025-01-02', initialPrice: 3.809, initialAmount: 10000, step: 0.10, rebound: 0.02, pullback: 0.02, gridAmount: 1000 }];
+  const format = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const priceFormat = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+
+  function number(v: string) { const n = Number(v); return Number.isFinite(n) ? n : 0; }
+  function money(v: number) { return `${v >= 0 ? '+' : '-'}¥${format.format(Math.abs(v))}`; }
+  function marketFor(code: string) {
+    // 上交所 ETF / 股票以 5、6、9 开头；其余按深交所处理。
+    return /^[569]/.test(code) ? 'sh' : 'sz';
+  }
+  function isEtf(code: string) {
+    // 沪市 5 开头基金，以及深市 15—18 开头的 ETF / LOF；A 股常见代码为 0、3、6 开头。
+    return /^(5\d{5}|1[5-8]\d{4})$/.test(code);
+  }
+  function editable(row: Row, key: keyof Row, type: string, value: string | number, extra = '') {
+    return `<input class="cell-input ${extra}" data-id="${row.id}" data-key="${key}" type="${type}" value="${value}">`;
+  }
+  function render() {
+    body.innerHTML = rows.map(row => `<tr data-row="${row.id}">
+      <td>${editable(row, 'code', 'text', row.code, 'code')}</td>
+      <td class="stock-name">${row.name || '获取行情后自动填充'}</td>
+      <td>${editable(row, 'date', 'date', row.date)}</td>
+      <td>${editable(row, 'initialPrice', 'number', row.initialPrice)}</td>
+      <td>${editable(row, 'initialAmount', 'number', row.initialAmount)}</td>
+      <td>${editable(row, 'step', 'number', row.step)}</td>
+      <td>${editable(row, 'rebound', 'number', row.rebound)}</td>
+      <td>${editable(row, 'pullback', 'number', row.pullback)}</td>
+      <td>${editable(row, 'gridAmount', 'number', row.gridAmount)}</td>
+      <td class="computed current">—</td><td class="computed last-date">—</td><td class="computed last">—</td><td class="computed buy">—</td><td class="computed sell">—</td><td class="computed count">—</td><td class="computed max-capital">—</td><td class="computed pnl">—</td>
+      <td class="row-actions"><button class="save" data-save="${row.id}" type="button">保存</button></td>
+    </tr>`).join('');
+    rows.forEach(updateComputed);
+  }
+  function calculate(row: Row): Result | null {
+    const candles = row.candles;
+    if (!candles?.length || !row.initialPrice || !row.initialAmount || !row.gridAmount || !row.step) return null;
+    const initialFee = row.initialAmount * feeRate;
+    let cash = -initialFee;
+    let shares = row.initialAmount / row.initialPrice;
+    let cost = row.initialAmount + initialFee;
+    let realized = 0;
+    // 本金只统计成交金额；佣金已在现金与盈亏中扣除，不混入本金。
+    let netCapitalUsed = row.initialAmount;
+    let maxCapital = netCapitalUsed;
+    let lastTrade = row.initialPrice;
+    let lastTradeDate = row.date;
+    let lowSince: number | null = null;
+    let highSince: number | null = null;
+    let buys = 0, sells = 0;
+    const trades: Trade[] = [{ date: row.date, side: '建仓', price: row.initialPrice, amount: row.initialAmount, shares, capitalUsed: netCapitalUsed, pnl: -initialFee }];
+    const series: EquityPoint[] = [];
+    // 接口在非交易日会从下一交易日开始返回；该首个实际交易日仍视为建仓日。
+    const openingDay = candles.find(candle => candle.date >= row.date)?.date;
+    for (const candle of candles) {
+      // 建仓日仅按用户输入的建仓价格建立初始仓位，不读取当日高低价，也绝不触发网格。
+      if (candle.date === openingDay) {
+        series.push({ date: candle.date, current: candle.close, positionValue: shares * candle.close, capitalUsed: netCapitalUsed, pnl: cash + shares * candle.close - row.initialAmount });
+        continue;
+      }
+      // 买入和卖出须先越过上次成交价一个网格，再在之后的交易日确认反转。
+      if (candle.low <= lastTrade - row.step) lowSince = lowSince === null ? candle.low : Math.min(lowSince, candle.low);
+      if (candle.high >= lastTrade + row.step) highSince = highSince === null ? candle.high : Math.max(highSince, candle.high);
+      if (lowSince !== null && candle.high >= lowSince + row.rebound) {
+        const price = lowSince + row.rebound;
+        const qty = row.gridAmount / price;
+        const fee = row.gridAmount * feeRate;
+        shares += qty; cost += row.gridAmount + fee; cash -= row.gridAmount + fee; netCapitalUsed += row.gridAmount; maxCapital = Math.max(maxCapital, netCapitalUsed); lastTrade = price; lastTradeDate = candle.date; buys++; trades.push({ date: candle.date, side: '买入', price, amount: row.gridAmount, shares, capitalUsed: netCapitalUsed, pnl: cash + shares * price - row.initialAmount }); lowSince = null; highSince = null;
+      } else if (highSince !== null && candle.low <= highSince - row.pullback) {
+        const price = highSince - row.pullback;
+        const qty = Math.min(shares, row.gridAmount / price);
+        if (qty > 0) { shares -= qty; const proceeds = qty * price; const fee = proceeds * feeRate; const tax = isEtf(row.code.trim()) ? 0 : proceeds * stockSellTaxRate; const netProceeds = proceeds - fee - tax; cash += netProceeds; netCapitalUsed -= proceeds; realized += netProceeds - qty * (cost / (shares + qty)); cost -= qty * (cost / (shares + qty)); lastTrade = price; lastTradeDate = candle.date; sells++; trades.push({ date: candle.date, side: '卖出', price, amount: proceeds, shares, capitalUsed: netCapitalUsed, pnl: cash + shares * price - row.initialAmount }); }
+        highSince = null; lowSince = null;
+      }
+      series.push({ date: candle.date, current: candle.close, positionValue: shares * candle.close, capitalUsed: netCapitalUsed, pnl: cash + shares * candle.close - row.initialAmount });
+    }
+    const current = candles.at(-1)!.close;
+    // 正在等待的极值决定下一笔回转价；未触及步长时，显示首个触发阈值。
+    const nextBuy = lowSince !== null ? lowSince + row.rebound : lastTrade - row.step + row.rebound;
+    const nextSell = highSince !== null ? highSince - row.pullback : lastTrade + row.step - row.pullback;
+    const value = cash + shares * current;
+    return { current, lastTradeDate, lastTrade, nextBuy, nextSell, buys, sells, maxCapital, pnl: value - row.initialAmount, value, realized, range: `${candles[0].date} ～ ${candles.at(-1)!.date}`, trades, series };
+  }
+  function updateComputed(row: Row) {
+    const tr = body.querySelector(`[data-row="${row.id}"]`) as HTMLTableRowElement | null;
+    const result = calculate(row);
+    if (!tr) return;
+    const put = (selector: string, value: string) => { const el = tr.querySelector(selector); if (el) el.textContent = value; };
+    if (!result) { ['.current','.last-date','.last','.buy','.sell','.count','.max-capital','.pnl'].forEach(s => put(s, '—')); return; }
+    put('.current', priceFormat.format(result.current)); put('.last-date', result.lastTradeDate); put('.last', priceFormat.format(result.lastTrade)); put('.buy', priceFormat.format(result.nextBuy)); put('.sell', priceFormat.format(result.nextSell)); put('.count', `${result.buys} / ${result.sells}`); put('.max-capital', `¥${format.format(result.maxCapital)}`);
+    put('.pnl', money(result.pnl));
+    (tr.querySelector('.pnl') as HTMLElement).className = `computed pnl ${result.pnl >= 0 ? 'up' : 'down'}`;
+    document.querySelector('#summary-title')!.textContent = `${row.name} · ${row.code}`;
+    document.querySelector('#summary-range')!.textContent = result.range;
+    document.querySelector('#summary-value')!.textContent = `¥${format.format(result.value)}`;
+    document.querySelector('#summary-realized')!.textContent = money(result.realized);
+    renderChart(result.series, result.nextBuy, result.nextSell);
+  }
+  function renderChart(series: EquityPoint[], nextBuy: number, nextSell: number) {
+    const svg = document.querySelector('#equity-chart') as SVGSVGElement;
+    if (!series.length) return;
+    const width = 920, height = 300, left = 62, right = 54, top = 18, bottom = 38;
+    const chartWidth = width - left - right, chartHeight = height - top - bottom;
+    const values = series.flatMap(point => [point.positionValue, point.capitalUsed, point.pnl]);
+    const min = Math.min(0, ...values), max = Math.max(...values);
+    const span = max - min || 1; const yMin = min - span * .06, yMax = max + span * .06;
+    const priceMinRaw = Math.min(...series.map(point => point.current), nextBuy, nextSell);
+    const priceMaxRaw = Math.max(...series.map(point => point.current), nextBuy, nextSell);
+    const priceSpan = priceMaxRaw - priceMinRaw || Math.max(priceMaxRaw * .02, .01);
+    const priceMin = priceMinRaw - priceSpan * .06, priceMax = priceMaxRaw + priceSpan * .06;
+    const x = (index: number) => left + (index / Math.max(1, series.length - 1)) * chartWidth;
+    const y = (value: number) => top + ((yMax - value) / (yMax - yMin)) * chartHeight;
+    const priceY = (value: number) => top + ((priceMax - value) / (priceMax - priceMin)) * chartHeight;
+    const path = (field: keyof Omit<EquityPoint, 'date'>) => series.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${y(point[field]).toFixed(1)}`).join('');
+    const grid = Array.from({ length: 5 }, (_, index) => { const value = yMin + ((yMax - yMin) * index / 4); const yy = y(value); return `<line x1="${left}" x2="${width - right}" y1="${yy}" y2="${yy}" stroke="#e2e8f0"/><text x="${left - 8}" y="${yy + 4}" text-anchor="end" fill="#94a3b8" font-size="10">${(value / 10000).toFixed(1)}万</text>`; }).join('');
+    const priceLabels = Array.from({ length: 5 }, (_, index) => { const value = priceMin + ((priceMax - priceMin) * index / 4); const yy = priceY(value); return `<text x="${width - right + 8}" y="${yy + 4}" fill="#64748b" font-size="10">${format.format(value)}</text>`; }).join('');
+    const labels = [0, Math.floor((series.length - 1) / 2), series.length - 1].map(index => `<text x="${x(index)}" y="${height - 12}" text-anchor="middle" fill="#94a3b8" font-size="10">${series[index].date}</text>`).join('');
+    const zero = min < 0 ? `<line x1="${left}" x2="${width - right}" y1="${y(0)}" y2="${y(0)}" stroke="#475569" stroke-width="1.5" stroke-dasharray="6 4"/>` : '';
+    const buyY = priceY(nextBuy), sellY = priceY(nextSell);
+    const priceLevels = `<line x1="${left}" x2="${width - right}" y1="${buyY}" y2="${buyY}" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${width - right + 8}" y="${buyY + 4}" fill="#16a34a" font-size="10">买 ${format.format(nextBuy)}</text><line x1="${left}" x2="${width - right}" y1="${sellY}" y2="${sellY}" stroke="#ea580c" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${width - right + 8}" y="${sellY + 4}" fill="#ea580c" font-size="10">卖 ${format.format(nextSell)}</text>`;
+    svg.innerHTML = `<g>${grid}${zero}${priceLabels}${priceLevels}</g><path d="${path('positionValue')}" fill="none" stroke="#2563eb" stroke-width="1.5"/><path d="${path('capitalUsed')}" fill="none" stroke="#f59e0b" stroke-width="1.5"/><path d="${path('pnl')}" fill="none" stroke="#dc2626" stroke-width="1.5"/><path d="${series.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${priceY(point.current).toFixed(1)}`).join('')}" fill="none" stroke="#7c3aed" stroke-width="1.5"/>${labels}<g class="chart-crosshair" visibility="hidden"><line class="crosshair-v" y1="${top}" y2="${height - bottom}" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3"/><line class="crosshair-h" x1="${left}" x2="${width - right}" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3"/><circle class="crosshair-dot position" r="4" fill="#2563eb" stroke="#fff" stroke-width="2"/><circle class="crosshair-dot capital" r="4" fill="#f59e0b" stroke="#fff" stroke-width="2"/><circle class="crosshair-dot profit" r="4" fill="#dc2626" stroke="#fff" stroke-width="2"/><circle class="crosshair-dot current" r="4" fill="#7c3aed" stroke="#fff" stroke-width="2"/><g class="chart-tooltip"><rect fill="#0f172a" fill-opacity=".94" rx="6"/><text class="tooltip-date" x="10" y="17" fill="#f8fafc" font-size="10" font-weight="700"/><text class="tooltip-current" x="10" y="35" fill="#f8fafc" font-size="10"/><text class="tooltip-position" x="10" y="53" fill="#f8fafc" font-size="10"/><text class="tooltip-capital" x="10" y="71" fill="#f8fafc" font-size="10"/><text class="tooltip-profit" x="10" y="89" fill="#f8fafc" font-size="10"/><text class="tooltip-buy-sell" x="10" y="107" fill="#f8fafc" font-size="10"/></g></g><rect class="chart-hit-area" x="${left}" y="${top}" width="${chartWidth}" height="${chartHeight}" fill="transparent" style="cursor:crosshair"/>`;
+    const crosshair = svg.querySelector('.chart-crosshair') as SVGGElement;
+    const vertical = svg.querySelector('.crosshair-v') as SVGLineElement;
+    const horizontal = svg.querySelector('.crosshair-h') as SVGLineElement;
+    const dots = {
+      position: svg.querySelector('.crosshair-dot.position') as SVGCircleElement,
+      capital: svg.querySelector('.crosshair-dot.capital') as SVGCircleElement,
+      profit: svg.querySelector('.crosshair-dot.profit') as SVGCircleElement,
+      current: svg.querySelector('.crosshair-dot.current') as SVGCircleElement,
+    };
+    const tooltip = svg.querySelector('.chart-tooltip') as SVGGElement;
+    const tooltipBox = tooltip.querySelector('rect') as SVGRectElement;
+    const setText = (selector: string, text: string) => { (tooltip.querySelector(selector) as SVGTextElement).textContent = text; };
+    const showPoint = (event: PointerEvent) => {
+      const bounds = svg.getBoundingClientRect();
+      const pointerX = (event.clientX - bounds.left) * width / bounds.width;
+      const index = Math.max(0, Math.min(series.length - 1, Math.round((pointerX - left) / chartWidth * (series.length - 1))));
+      const point = series[index];
+      const xx = x(index);
+      vertical.setAttribute('x1', String(xx)); vertical.setAttribute('x2', String(xx));
+      horizontal.setAttribute('y1', String(y(point.positionValue))); horizontal.setAttribute('y2', String(y(point.positionValue)));
+      dots.position.setAttribute('cx', String(xx)); dots.position.setAttribute('cy', String(y(point.positionValue)));
+      dots.capital.setAttribute('cx', String(xx)); dots.capital.setAttribute('cy', String(y(point.capitalUsed)));
+      dots.profit.setAttribute('cx', String(xx)); dots.profit.setAttribute('cy', String(y(point.pnl)));
+      dots.current.setAttribute('cx', String(xx)); dots.current.setAttribute('cy', String(priceY(point.current)));
+      setText('.tooltip-date', point.date);
+      setText('.tooltip-current', `当前价格  ${format.format(point.current)}`);
+      setText('.tooltip-position', `持仓市值  ¥${format.format(point.positionValue)}`);
+      setText('.tooltip-capital', `占用本金  ¥${format.format(point.capitalUsed)}`);
+      setText('.tooltip-profit', `总盈亏    ${money(point.pnl)}`);
+      setText('.tooltip-buy-sell', `预计买 / 卖  ${format.format(nextBuy)} / ${format.format(nextSell)}`);
+      const tooltipWidth = 190, tooltipHeight = 118;
+      const tooltipX = xx > width - right - tooltipWidth - 12 ? xx - tooltipWidth - 12 : xx + 12;
+      const tooltipY = Math.max(top, Math.min(height - bottom - tooltipHeight, event.offsetY * height / bounds.height - tooltipHeight / 2));
+      tooltip.setAttribute('transform', `translate(${tooltipX},${tooltipY})`);
+      tooltipBox.setAttribute('width', String(tooltipWidth)); tooltipBox.setAttribute('height', String(tooltipHeight));
+      crosshair.setAttribute('visibility', 'visible');
+    };
+    svg.querySelector('.chart-hit-area')!.addEventListener('pointermove', showPoint);
+    svg.querySelector('.chart-hit-area')!.addEventListener('pointerleave', () => crosshair.setAttribute('visibility', 'hidden'));
+  }
+  async function load(row: Row) {
+    const code = row.code.trim();
+    if (!/^\d{6}$/.test(code)) throw new Error('请输入 6 位 A 股或 ETF 代码');
+    const begin = row.date?.trim();
+    if (!begin) throw new Error('请选择买入日期后再进行回测');
+    let end = new Date().toISOString().slice(0, 10);
+    // 腾讯接口允许跨域访问；使用前复权日线，避免除权除息造成网格价格断层。
+    const symbol = `${marketFor(code)}${code}`;
+    // 前复权接口单次最多返回 640 根日线；起始日期较早时向前分段补齐，避免遗漏早期回测数据。
+    let lines: string[][] = [];
+    for (let page = 0; page < 20; page++) {
+      const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${symbol},day,${begin},${end},640,qfq`;
+      const response = await fetch(url);
+      if (!response.ok) throw new Error('行情服务暂不可用');
+      const json = await response.json();
+      // 部分 ETF 在该接口中以 day 返回前复权数据，股票通常为 qfqday。
+      const batch: string[][] = json.data?.[symbol]?.qfqday ?? json.data?.[symbol]?.day ?? [];
+      if (!batch.length) break;
+      lines = [...batch, ...lines];
+      const firstDate = batch[0][0];
+      if (firstDate <= begin || batch.length < 640) break;
+      const previousDay = new Date(`${firstDate}T00:00:00Z`);
+      previousDay.setUTCDate(previousDay.getUTCDate() - 1);
+      end = previousDay.toISOString().slice(0, 10);
+    }
+    lines = [...new Map(lines.map(line => [line[0], line])).values()];
+    if (!lines.length) throw new Error('没有找到该日期后的日线数据');
+    // quote 接口返回格式为：市场~证券简称~代码~最新价…；独立失败不影响日线回测。
+    try {
+      const quote = await fetch(`https://qt.gtimg.cn/q=${symbol}`);
+      // 行情简称文本是 GBK。Response.text() 固定按 UTF-8 解码会让中文变成乱码。
+      const quoteText = new TextDecoder('gbk').decode(await quote.arrayBuffer());
+      const name = quoteText.match(/="([\s\S]*)"/)?.[1]?.split('~')[1]?.trim();
+      row.name = name || code;
+    } catch { row.name = code; }
+    row.candles = lines
+      .map(p => ({ date: p[0], close: number(p[2]), high: number(p[3]), low: number(p[4]) }))
+      .filter(candle => candle.date >= row.date)
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }
+  body.addEventListener('input', event => {
+    const input = event.target as HTMLInputElement;
+    const id = Number(input.dataset.id); const key = input.dataset.key as keyof Row; const row = rows.find(item => item.id === id);
+    if (!row || !key) return;
+    (row as any)[key] = input.type === 'number' ? number(input.value) : input.value;
+    if (['code', 'date'].includes(key)) row.candles = undefined;
+    updateComputed(row);
+  });
+  function savedRecords(): SavedRecord[] { try { return JSON.parse(localStorage.getItem(storageKey) ?? '[]'); } catch { return []; } }
+  function saveRow(row: Row, btn?: HTMLButtonElement) {
+    const result = calculate(row);
+    if (!result) {
+      alert('请先点击右上角“获取数据并回测”按钮，回测完成后即可保存标的。');
+      status.textContent = '请先获取该标的的历史日线并完成回测';
+      return;
+    }
+    const record: SavedRecord = {
+      id: crypto.randomUUID(), savedAt: new Date().toISOString(),
+      row: { id: row.id, name: row.name, code: row.code, date: row.date, initialPrice: row.initialPrice, initialAmount: row.initialAmount, step: row.step, rebound: row.rebound, pullback: row.pullback, gridAmount: row.gridAmount }, result,
+    };
+    const records = savedRecords(); records.unshift(record); localStorage.setItem(storageKey, JSON.stringify(records));
+    status.textContent = `${row.name || row.code} 已保存，可在“已保存标的”查看详情`;
+    if (btn) {
+      const originalText = btn.textContent;
+      btn.textContent = '已保存 ✓';
+      btn.classList.add('saved');
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.classList.remove('saved');
+      }, 1500);
+    }
+  }
+  body.addEventListener('click', event => {
+    const button = (event.target as HTMLElement).closest('[data-save]') as HTMLButtonElement | null;
+    if (button && button.dataset.save) {
+      const row = rows.find(item => item.id === Number(button.dataset.save));
+      if (row) saveRow(row, button);
+    }
+  });
+  document.querySelector('#run-all')!.addEventListener('click', async () => {
+    const button = document.querySelector('#run-all') as HTMLButtonElement;
+    const missingDate = rows.find(r => !r.date || !r.date.trim());
+    if (missingDate) {
+      alert('请选择买入日期后再获取数据并回测');
+      status.textContent = '回测未开始：请先选择买入日期';
+      return;
+    }
+    button.disabled = true; status.textContent = '正在获取日线并回测…';
+    const outcomes = await Promise.allSettled(rows.map(load));
+    outcomes.forEach((outcome, i) => { if (outcome.status === 'rejected') status.textContent = `${rows[i].code || '该标的'}：${outcome.reason.message}`; });
+    render(); const successful = outcomes.filter(o => o.status === 'fulfilled').length;
+    if (successful) status.textContent = `已完成 ${successful} 个标的的历史日线回测`;
+    button.disabled = false;
+  });
+  render();
+</script>
+
+<style>
+  .grid-hero { margin-bottom: 1.4rem; }
+  .notice { display:flex; gap:12px; align-items:flex-start; margin-bottom:20px; padding:13px 16px; border:1px solid #bae6fd; border-radius:10px; background:#f0f9ff; color:#475569; font-size:13px; line-height:1.65; }
+  .notice span { flex:none; padding:2px 7px; border-radius:4px; color:#0369a1; background:#e0f2fe; font-size:12px; font-weight:700; }
+  .notice p { margin:0; }
+  .toolbar { display:flex; justify-content:space-between; gap:16px; align-items:center; margin-bottom:14px; color:#64748b; font-size:13px; }
+  .toolbar-actions { display:flex; gap:8px; flex:none; }
+  .button { border:0; border-radius:7px; padding:9px 13px; background:#0369a1; color:#fff; font-size:13px; font-weight:600; cursor:pointer; box-shadow:0 1px 2px rgb(15 23 42 / .12); }
+  .button:hover { background:#075985; }.button:disabled { opacity:.55; cursor:wait; }.button.secondary { border:1px solid #cbd5e1; background:#fff; color:#334155; box-shadow:none; }
+  .table-shell {
+    overflow-x: auto;
+    overflow-y: hidden;
+    min-height: 160px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: white;
+    box-shadow: 0 1px 3px rgb(15 23 42 / .04);
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  .table-shell::-webkit-scrollbar { height: 6px; width: 6px; }
+  .table-shell::-webkit-scrollbar-track { background: transparent; }
+  .table-shell::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
+  .table-shell::-webkit-scrollbar-thumb:hover { background-color: #94a3b8; }
+  .result-panel { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; overflow:hidden; margin-top:16px; border:1px solid #e2e8f0; border-radius:10px; background:#e2e8f0; }.result-panel div { min-height:74px; padding:13px 16px; background:#fff; }.result-panel span { display:block; margin-bottom:5px; color:#94a3b8; font-size:12px; }.result-panel strong { color:#1e293b; font-size:14px; font-variant-numeric:tabular-nums; }.data-note { margin:14px 2px 0; color:#94a3b8; font-size:12px; line-height:1.65; }
+  .chart-panel { margin-top:16px; padding:18px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; }.chart-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:8px; }.chart-head h2 { margin:0 0 3px; color:#1e293b; font-size:16px; }.chart-head p { margin:0; color:#94a3b8; font-size:12px; }.legend { display:flex; flex-wrap:wrap; gap:7px; align-items:center; color:#64748b; font-size:12px; }.line { display:inline-block; width:14px; height:2px; margin-left:5px; }.line.position { background:#2563eb; }.line.capital { background:#f59e0b; }.line.profit { background:#dc2626; }.line.close { background:#7c3aed; }.line.buy-level { border-top:2px dashed #16a34a; }.line.sell-level { border-top:2px dashed #ea580c; }.chart-scroll { overflow-x:auto; }.chart-scroll svg { display:block; width:100%; min-width:680px; height:auto; }.chart-hit-area { fill:transparent; cursor:crosshair; }.crosshair-v,.crosshair-h { stroke:#64748b; stroke-width:1; stroke-dasharray:3 3; pointer-events:none; }.crosshair-dot { stroke:#fff; stroke-width:2; pointer-events:none; }.crosshair-dot.position { fill:#2563eb; }.crosshair-dot.capital { fill:#f59e0b; }.crosshair-dot.profit { fill:#dc2626; }.chart-tooltip { pointer-events:none; }.chart-tooltip rect { fill:#0f172a; fill-opacity:.94; rx:6; }.chart-tooltip text { fill:#f8fafc; font-size:10px; font-variant-numeric:tabular-nums; }.chart-tooltip .tooltip-date { font-weight:700; }
+  @media (max-width:640px) { .toolbar { align-items:flex-start; flex-direction:column; }.toolbar-actions { width:100%; }.button { flex:1; }.result-panel { grid-template-columns:repeat(2,1fr); }.notice { flex-direction:column; gap:6px; } }
+</style>
+
+<style is:global>
+  .grid-table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; }
+  .grid-table th { height: 46px; padding: 12px 12px; border-bottom: 1px solid #cbd5e1; background: #f8fafc; color: #475569; font-weight: 600; white-space: nowrap; text-align: center; }
+  .grid-table td { height: 58px; padding: 8px 12px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; text-align: center; vertical-align: middle; color: #334155; font-variant-numeric: tabular-nums; }
+  .grid-table tbody tr { transition: background-color .15s ease; }
+  .grid-table tbody tr:hover { background-color: #f8fafc; }
+  .grid-table tr:last-child td { border-bottom: 0; }
+  .grid-table .stock-name { min-width: 110px; color: #475569 !important; text-align: center; }
+  .grid-table .cell-input { box-sizing: border-box; display: inline-block; margin: 0 auto; width: 80px; height: 34px; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px 8px; background: #f8fafc; color: #0f172a; font: inherit; text-align: center; outline: none; transition: all .15s ease; }
+  .grid-table .cell-input:hover { border-color: #cbd5e1; background: #fff; }
+  .grid-table .cell-input:focus { border-color: #0284c7; background: #fff; box-shadow: 0 0 0 2px rgba(2, 132, 199, .15); }
+  .grid-table .cell-input[type=date] { width: 134px; text-align: center; }
+  .grid-table .cell-input[type=date]::-webkit-date-and-time-value { text-align: center; }
+  .grid-table .cell-input[type=text] { width: 88px; text-align: center; }
+  .grid-table .cell-input.code { width: 80px; font-family: ui-monospace, monospace; font-weight: 500; }
+  .grid-table i { margin-left: 2px; color: #94a3b8; font-style: normal; }
+  .grid-table .computed { min-width: 84px; text-align: center; }
+  .grid-table .up { color: #dc2626 !important; font-weight: 700; }
+  .grid-table .down { color: #16a34a !important; font-weight: 700; }
+  .grid-table .row-actions { min-width: 88px; text-align: center; }
+  .grid-table .save { display: inline-flex; align-items: center; justify-content: center; border: 1px solid #bae6fd; border-radius: 6px; padding: 5px 14px; background: #f0f9ff; color: #0369a1; font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s ease; user-select: none; position: relative; z-index: 1; }
+  .grid-table .save:hover { background: #e0f2fe; border-color: #7dd3fc; }
+  .grid-table .save:active { transform: scale(0.96); }
+  .grid-table .save.saved { background: #f0fdf4 !important; border-color: #86efac !important; color: #16a34a !important; }
+</style>

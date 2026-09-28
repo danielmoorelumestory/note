@@ -1,0 +1,225 @@
+---
+import Base from '../../../layouts/Base.astro';
+import { href } from '../../../lib/url';
+
+const savedUrl = href('lab/grid-trading/saved');
+---
+
+<Base title="网格回测详情" current="lab" description="网格回测的历史成交明细">
+  <header class="hero compact-hero"><p class="kicker">BACKTEST DETAIL</p><h1 id="title">回测详情</h1><p id="subtitle" class="lede">正在读取已保存记录…</p></header>
+  <a class="back" href={savedUrl}>← 返回已保存标的</a>
+  <section id="stats" class="stats"></section>
+  <section class="chart-panel">
+    <div class="chart-head"><div><h2>资金与收盘价变化曲线</h2><p>当前标的的历史回测数据；收盘价及预计买卖价使用右侧刻度</p></div><div class="legend"><span class="line position"></span>持仓市值 <span class="line capital"></span>占用本金 <span class="line profit"></span>总盈亏 <span class="line close"></span>收盘价 <span class="line buy-level"></span>预计买入 <span class="line sell-level"></span>预计卖出</div></div>
+    <div class="chart-scroll"><svg id="equity-chart" viewBox="0 0 920 300" role="img" aria-label="当前标的的资金与收盘价变化曲线"><text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">读取已保存回测数据后显示曲线</text></svg></div>
+  </section>
+  <section class="history"><h2>历史成交</h2><p>持仓市值按该笔成交价估值；“当时占用本金”仅统计成交金额，不含手续费，其最高值与回测摘要中的“最多使用本金”一致。最新成交在最上方。</p><div class="table-shell"><table class="detail-table"><thead><tr><th>日期</th><th>操作</th><th>成交价格</th><th>成交金额</th><th>成交后持仓份额</th><th>成交后持仓市值</th><th>当时占用本金</th><th>当时总盈亏</th></tr></thead><tbody id="trades"></tbody></table></div></section>
+</Base>
+
+<script>
+  type Candle = { date: string; close: number; high: number; low: number };
+  type Trade = { date: string; side: string; price: number; amount: number; shares: number; capitalUsed?: number; pnl: number };
+  type EquityPoint = { date: string; current: number; positionValue: number; capitalUsed: number; pnl: number };
+  type RecordItem = {
+    id: string;
+    savedAt: string;
+    refreshedOn?: string;
+    row: { name: string; code: string; date: string; initialPrice: number; initialAmount: number; step: number; rebound: number; pullback: number; gridAmount: number };
+    result: {
+      range: string;
+      current: number;
+      lastTradeDate?: string;
+      lastTrade?: number;
+      nextBuy?: number;
+      nextSell?: number;
+      pnl: number;
+      value: number;
+      maxCapital: number;
+      buys: number;
+      sells: number;
+      trades: Trade[];
+      series?: EquityPoint[];
+    };
+  };
+  const key = 'grid-trading-saved-v1'; const id = new URLSearchParams(location.search).get('id');
+  const money = (v: number) => `${v >= 0 ? '+' : '-'}¥${Math.abs(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const price = (v?: number) => typeof v === 'number' && Number.isFinite(v) ? `¥${v.toFixed(3)}` : '—';
+  let record: RecordItem | undefined; try { record = (JSON.parse(localStorage.getItem(key) ?? '[]') as RecordItem[]).find(item => item.id === id); } catch { /* empty */ }
+  if (!record) { document.querySelector('#title')!.textContent = '未找到保存记录'; document.querySelector('#subtitle')!.textContent = '该记录可能已被删除，或来自另一台浏览器。'; }
+  else {
+    document.querySelector('#title')!.textContent = `${record.row.name} · ${record.row.code}`;
+    document.querySelector('#subtitle')!.textContent = `${record.result.range} · 初始价 ${record.row.initialPrice} · 每格金额 ¥${record.row.gridAmount.toLocaleString('zh-CN')}`;
+    const lastTradePrice = record.result.lastTrade ?? record.row.initialPrice;
+    const currentPrice = record.result.current;
+    const step = record.row.step;
+    const buyStepTarget = typeof lastTradePrice === 'number' && typeof step === 'number' ? lastTradePrice - step : undefined;
+    const sellStepTarget = typeof lastTradePrice === 'number' && typeof step === 'number' ? lastTradePrice + step : undefined;
+    const buyStepReached = typeof currentPrice === 'number' && typeof buyStepTarget === 'number' && currentPrice <= buyStepTarget;
+    const sellStepReached = typeof currentPrice === 'number' && typeof sellStepTarget === 'number' && currentPrice >= sellStepTarget;
+    const buyHint = buyStepReached ? '已达步长 · 待反弹' : (buyStepTarget !== undefined ? `需跌破 ¥${buyStepTarget.toFixed(3)}` : '—');
+    const sellHint = sellStepReached ? '已达步长 · 待回撤' : (sellStepTarget !== undefined ? `需冲破 ¥${sellStepTarget.toFixed(3)}` : '—');
+
+    document.querySelector('#stats')!.innerHTML = `
+      <div><span>当前价格</span><strong>${price(record.result.current)}</strong></div>
+      <div><span>上次成交价</span><strong>${price(record.result.lastTrade)}</strong></div>
+      <div>
+        <span class="${buyStepReached ? 'warn' : ''}">预计下次买入</span>
+        <strong class="down">${price(record.result.nextBuy)}</strong>
+        <span class="step-hint">${buyHint}</span>
+      </div>
+      <div>
+        <span class="${sellStepReached ? 'warn' : ''}">预计下次卖出</span>
+        <strong class="up">${price(record.result.nextSell)}</strong>
+        <span class="step-hint">${sellHint}</span>
+      </div>
+      <div><span>总盈亏</span><strong class="${record.result.pnl >= 0 ? 'up' : 'down'}">${money(record.result.pnl)}</strong></div>
+      <div><span>持仓市值</span><strong>¥${record.result.value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>
+      <div><span>最多使用本金</span><strong>¥${record.result.maxCapital.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong></div>
+      <div><span>买入 / 卖出</span><strong>${record.result.buys} / ${record.result.sells}</strong></div>
+    `;
+    let derivedCapital = 0;
+    const tradeRows = record.result.trades.map((t, index) => {
+      // 兼容修复前保存的记录：按成交额和佣金反推当时占用本金。
+      if (typeof t.capitalUsed === 'number') derivedCapital = t.capitalUsed;
+      else if (index === 0) derivedCapital = t.amount;
+      else if (t.side === '买入') derivedCapital += t.amount;
+      else derivedCapital -= t.amount;
+      const positionValue = t.shares * t.price;
+      return `<tr><td>${t.date}</td><td><b class="${t.side === '卖出' ? 'sell' : 'buy'}">${t.side}</b></td><td>${t.price.toFixed(3)}</td><td>¥${t.amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</td><td>${t.shares.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</td><td>¥${positionValue.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</td><td>¥${derivedCapital.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</td><td class="${t.pnl >= 0 ? 'up' : 'down'}">${money(t.pnl)}</td></tr>`;
+    });
+    document.querySelector('#trades')!.innerHTML = tradeRows.reverse().join('');
+    renderChart(record.result.series ?? [], record.result.nextBuy, record.result.nextSell);
+    void refreshRecord(record);
+  }
+
+  async function refreshRecord(saved: RecordItem) {
+    const today = new Date().toISOString().slice(0, 10);
+    if (saved.refreshedOn === today) return;
+    const cacheKey = `grid-trading-market-cache-v1:${saved.row.code}:${saved.row.date}`;
+    type CacheItem = { date: string; candles: Candle[] };
+    let cached: CacheItem | undefined;
+    try { cached = JSON.parse(localStorage.getItem(cacheKey) ?? ''); } catch { /* miss */ }
+    let candles = cached?.date === today ? cached.candles : undefined;
+    document.querySelector('#subtitle')!.textContent = '正在刷新行情并重新计算…';
+    try {
+      if (!candles?.length) {
+        const symbol = /^[569]/.test(saved.row.code) ? `sh${saved.row.code}` : `sz${saved.row.code}`;
+        let end = today, lines: string[][] = [];
+        for (let page = 0; page < 20; page++) {
+          const response = await fetch(`https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${symbol},day,${saved.row.date},${end},640,qfq`);
+          if (!response.ok) throw new Error('行情服务暂不可用');
+          const batch: string[][] = (await response.json()).data?.[symbol]?.qfqday ?? [];
+          if (!batch.length) break;
+          lines = [...batch, ...lines];
+          const firstDate = batch[0][0];
+          if (firstDate <= saved.row.date || batch.length < 640) break;
+          const previous = new Date(`${firstDate}T00:00:00Z`); previous.setUTCDate(previous.getUTCDate() - 1); end = previous.toISOString().slice(0, 10);
+        }
+        candles = [...new Map(lines.map(line => [line[0], line])).values()]
+          .map(line => ({ date: line[0], close: Number(line[2]), high: Number(line[3]), low: Number(line[4]) }))
+          .filter(candle => candle.date >= saved.row.date)
+          .sort((a, b) => a.date.localeCompare(b.date));
+        localStorage.setItem(cacheKey, JSON.stringify({ date: today, candles }));
+      }
+      if (!candles.length) throw new Error('没有可用日线');
+      const result = calculateFromCandles(saved.row, candles);
+      const updated = { ...saved, refreshedOn: today, result };
+      const records = JSON.parse(localStorage.getItem(key) ?? '[]') as RecordItem[];
+      localStorage.setItem(key, JSON.stringify(records.map(item => item.id === saved.id ? updated : item)));
+      location.reload();
+    } catch {
+      document.querySelector('#subtitle')!.textContent = `${saved.result.range} · 行情刷新失败，当前显示已保存快照`;
+    }
+  }
+
+  function calculateFromCandles(row: RecordItem['row'], candles: Candle[]): RecordItem['result'] {
+    const feeRate = .00015, taxRate = /^(5\d{5}|1[5-8]\d{4})$/.test(row.code) ? 0 : .0005;
+    let cash = -row.initialAmount * feeRate, shares = row.initialAmount / row.initialPrice, cost = row.initialAmount * (1 + feeRate), capitalUsed = row.initialAmount, maxCapital = capitalUsed, lastTrade = row.initialPrice, lastTradeDate = row.date, realized = 0, lowSince: number | null = null, highSince: number | null = null, buys = 0, sells = 0;
+    const trades: Trade[] = [{ date: row.date, side: '建仓', price: row.initialPrice, amount: row.initialAmount, shares, capitalUsed, pnl: cash }];
+    const series: EquityPoint[] = [];
+    const openingDay = candles.find(candle => candle.date >= row.date)?.date;
+    for (const candle of candles) {
+      if (candle.date !== openingDay) {
+        if (candle.low <= lastTrade - row.step) lowSince = lowSince === null ? candle.low : Math.min(lowSince, candle.low);
+        if (candle.high >= lastTrade + row.step) highSince = highSince === null ? candle.high : Math.max(highSince, candle.high);
+        if (lowSince !== null && candle.high >= lowSince + row.rebound) {
+          const tradePrice = lowSince + row.rebound, quantity = row.gridAmount / tradePrice, fee = row.gridAmount * feeRate;
+          shares += quantity; cost += row.gridAmount + fee; cash -= row.gridAmount + fee; capitalUsed += row.gridAmount; maxCapital = Math.max(maxCapital, capitalUsed); lastTrade = tradePrice; lastTradeDate = candle.date; buys++;
+          trades.push({ date: candle.date, side: '买入', price: tradePrice, amount: row.gridAmount, shares, capitalUsed, pnl: cash + shares * tradePrice - row.initialAmount }); lowSince = null; highSince = null;
+        } else if (highSince !== null && candle.low <= highSince - row.pullback) {
+          const tradePrice = highSince - row.pullback, quantity = Math.min(shares, row.gridAmount / tradePrice);
+          if (quantity > 0) { const proceeds = quantity * tradePrice, fee = proceeds * feeRate, netProceeds = proceeds - fee - proceeds * taxRate, unitCost = cost / shares; shares -= quantity; cash += netProceeds; capitalUsed -= proceeds; realized += netProceeds - quantity * unitCost; cost -= quantity * unitCost; lastTrade = tradePrice; lastTradeDate = candle.date; sells++; trades.push({ date: candle.date, side: '卖出', price: tradePrice, amount: proceeds, shares, capitalUsed, pnl: cash + shares * tradePrice - row.initialAmount }); }
+          highSince = null; lowSince = null;
+        }
+      }
+      series.push({ date: candle.date, current: candle.close, positionValue: shares * candle.close, capitalUsed, pnl: cash + shares * candle.close - row.initialAmount });
+    }
+    const current = candles.at(-1)!.close, nextBuy = lowSince !== null ? lowSince + row.rebound : lastTrade - row.step + row.rebound, nextSell = highSince !== null ? highSince - row.pullback : lastTrade + row.step - row.pullback, value = cash + shares * current;
+    return { range: `${candles[0].date} ～ ${candles.at(-1)!.date}`, current, lastTradeDate, lastTrade, nextBuy, nextSell, pnl: value - row.initialAmount, value, maxCapital, buys, sells, trades, series };
+  }
+
+  function renderChart(series: EquityPoint[], nextBuy?: number, nextSell?: number) {
+    const svg = document.querySelector('#equity-chart') as SVGSVGElement;
+    if (!series.length || !Number.isFinite(nextBuy) || !Number.isFinite(nextSell)) { svg.innerHTML = '<text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">此保存记录没有完整曲线数据</text>'; return; }
+    const width = 920, height = 300, left = 62, right = 54, top = 18, bottom = 38, chartWidth = width - left - right, chartHeight = height - top - bottom;
+    const values = series.flatMap(point => [point.positionValue, point.capitalUsed, point.pnl]);
+    const min = Math.min(0, ...values), max = Math.max(...values), span = max - min || 1, yMin = min - span * .06, yMax = max + span * .06;
+    const priceMinRaw = Math.min(...series.map(point => point.current), nextBuy), priceMaxRaw = Math.max(...series.map(point => point.current), nextSell), priceSpan = priceMaxRaw - priceMinRaw || Math.max(priceMaxRaw * .02, .01), priceMin = priceMinRaw - priceSpan * .06, priceMax = priceMaxRaw + priceSpan * .06;
+    const x = (index: number) => left + index / Math.max(1, series.length - 1) * chartWidth;
+    const y = (value: number) => top + (yMax - value) / (yMax - yMin) * chartHeight;
+    const priceY = (value: number) => top + (priceMax - value) / (priceMax - priceMin) * chartHeight;
+    const path = (field: 'positionValue' | 'capitalUsed' | 'pnl', scale = y) => series.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${scale(point[field]).toFixed(1)}`).join('');
+    const grid = Array.from({ length: 5 }, (_, index) => { const value = yMin + (yMax - yMin) * index / 4, yy = y(value); return `<line x1="${left}" x2="${width - right}" y1="${yy}" y2="${yy}" stroke="#e2e8f0"/><text x="${left - 8}" y="${yy + 4}" text-anchor="end" fill="#94a3b8" font-size="10">${(value / 10000).toFixed(1)}万</text>`; }).join('');
+    const priceLabels = Array.from({ length: 5 }, (_, index) => { const value = priceMin + (priceMax - priceMin) * index / 4, yy = priceY(value); return `<text x="${width - right + 8}" y="${yy + 4}" fill="#64748b" font-size="10">${value.toFixed(3)}</text>`; }).join('');
+    const labels = [0, Math.floor((series.length - 1) / 2), series.length - 1].map(index => `<text x="${x(index)}" y="${height - 12}" text-anchor="middle" fill="#94a3b8" font-size="10">${series[index].date}</text>`).join('');
+    const zero = min < 0 ? `<line x1="${left}" x2="${width - right}" y1="${y(0)}" y2="${y(0)}" stroke="#475569" stroke-width="1.5" stroke-dasharray="6 4"/>` : '';
+    const levels = `<line x1="${left}" x2="${width - right}" y1="${priceY(nextBuy)}" y2="${priceY(nextBuy)}" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${width - right + 8}" y="${priceY(nextBuy) + 4}" fill="#16a34a" font-size="10">买 ${nextBuy.toFixed(3)}</text><line x1="${left}" x2="${width - right}" y1="${priceY(nextSell)}" y2="${priceY(nextSell)}" stroke="#ea580c" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${width - right + 8}" y="${priceY(nextSell) + 4}" fill="#ea580c" font-size="10">卖 ${nextSell.toFixed(3)}</text>`;
+    svg.innerHTML = `<g>${grid}${zero}${priceLabels}${levels}</g><path d="${path('positionValue')}" fill="none" stroke="#2563eb" stroke-width="1.5"/><path d="${path('capitalUsed')}" fill="none" stroke="#f59e0b" stroke-width="1.5"/><path d="${path('pnl')}" fill="none" stroke="#dc2626" stroke-width="1.5"/><path d="${series.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${priceY(point.current).toFixed(1)}`).join('')}" fill="none" stroke="#7c3aed" stroke-width="1.5"/>${labels}`;
+  }
+</script>
+
+<style>
+  .compact-hero { margin-bottom:1rem; }
+  .back { display:inline-block; margin-bottom:16px; color:#0369a1; font-size:13px; text-decoration:none; }
+  .back:hover { text-decoration:underline; }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:minmax(96px,auto); gap:1px; overflow:hidden; margin-bottom:28px; border:1px solid #e2e8f0; border-radius:10px; background:#e2e8f0; }
+  .history h2 { margin:0 0 4px; font-size:18px; }
+  .history > p { margin:0 0 12px; color:#64748b; font-size:12px; }
+  .table-shell {
+    overflow-x: auto;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 1px 3px rgb(15 23 42 / .04);
+    scrollbar-width: thin;
+    scrollbar-color: #cbd5e1 transparent;
+  }
+  .table-shell::-webkit-scrollbar { height: 6px; width: 6px; }
+  .table-shell::-webkit-scrollbar-track { background: transparent; }
+  .table-shell::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
+  .table-shell::-webkit-scrollbar-thumb:hover { background-color: #94a3b8; }
+  .chart-panel { margin-top:28px; padding:18px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; }.chart-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:8px; }.chart-head h2 { margin:0 0 3px; color:#1e293b; font-size:16px; }.chart-head p { margin:0; color:#94a3b8; font-size:12px; }.legend { display:flex; flex-wrap:wrap; gap:7px; align-items:center; color:#64748b; font-size:12px; }.line { display:inline-block; width:14px; height:2px; margin-left:5px; }.line.position { background:#2563eb; }.line.capital { background:#f59e0b; }.line.profit { background:#dc2626; }.line.close { background:#7c3aed; }.line.buy-level { border-top:2px dashed #16a34a; }.line.sell-level { border-top:2px dashed #ea580c; }.chart-scroll { overflow-x:auto; }.chart-scroll svg { display:block; width:100%; min-width:680px; height:auto; }
+  @media(max-width:640px){.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+
+<style is:global>
+  .stats div { padding: 12px 10px; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+  .stats span { display: block; margin-bottom: 4px; color: #94a3b8; font-size: 12px; transition: color .15s ease; }
+  .stats span.warn { color: #d97706 !important; font-weight: 700; }
+  .stats strong { display: block; font-size: 19px; font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; color: #1e293b; }
+  .stats .step-hint { margin-top: 4px; margin-bottom: 0; font-size: 11px; color: #94a3b8; line-height: 1; }
+  .stats .up { color: #dc2626 !important; font-weight: 600; }
+  .stats .down { color: #16a34a !important; font-weight: 600; }
+
+  .detail-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .detail-table th { height: 46px; padding: 11px 13px; background: #f8fafc; color: #475569; font-size: 12px; font-weight: 600; text-align: center; border-bottom: 1px solid #cbd5e1; white-space: nowrap; }
+  .detail-table td { height: 50px; padding: 8px 13px; border-bottom: 1px solid #f1f5f9; text-align: center; vertical-align: middle; white-space: nowrap; font-variant-numeric: tabular-nums; color: #334155; }
+  .detail-table tbody tr { transition: background-color .15s ease; }
+  .detail-table tbody tr:hover { background-color: #f8fafc; }
+  .detail-table tr:last-child td { border-bottom: 0; }
+  .detail-table .buy, .detail-table .sell { display: inline-flex; align-items: center; justify-content: center; min-width: 48px; border-radius: 4px; padding: 3px 8px; font-size: 11px; font-weight: 600; }
+  .detail-table .buy { background: #fef2f2; color: #dc2626; }
+  .detail-table .sell { background: #f0fdf4; color: #16a34a; }
+  .detail-table .up { color: #dc2626; font-weight: 600; }
+  .detail-table .down { color: #16a34a; font-weight: 600; }
+</style>
