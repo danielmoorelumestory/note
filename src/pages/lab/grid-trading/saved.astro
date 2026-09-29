@@ -26,7 +26,7 @@ const detailUrl = href('lab/grid-trading/detail');
 <script>
   import {
     readRecords, writeRecords, saveRecord, refreshRecord, refreshRecords, removeRecords, syncAll, pushRecord, withParamChange,
-    gridStatus, openingOf, formatMoney, formatPrice, tick, SYNC_KEY_STORAGE,
+    gridStatus, openingOf, formatMoney, formatPrice, tick, marketSessionOpen, marketToday, SYNC_KEY_STORAGE,
     type SavedRecord,
   } from '../../../lib/grid-trading';
 
@@ -191,7 +191,9 @@ const detailUrl = href('lab/grid-trading/detail');
     writeRecords(readRecords().map(item => { const fresh = byId.get(item.id); return fresh && fresh.updatedAt === item.updatedAt ? fresh : item; }));
     // 正在输入参数时不重绘，避免丢失未确认的输入。
     if (!container.querySelector('.param-input.dirty')) render();
-    marketStatus.textContent = `行情更新于 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
+    const hasTodayQuote = updated.some(item => item.result.series?.at(-1)?.date === marketToday());
+    const source = marketSessionOpen() && hasTodayQuote ? '盘中实时行情' : '最近收盘价';
+    marketStatus.textContent = `${source} · 更新于 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
   }
 
   async function syncRecords({ afterDelete = false } = {}) {

@@ -59,6 +59,13 @@ const STOCK_SELL_TAX_RATE = 0.0005;
 export const tick = (value: number) => Math.round(value * 1000) / 1000;
 // 交易日按北京时间计算，避免 UTC 零点前后把当天算成前一天。
 export const marketToday = () => new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Shanghai' });
+/** 中国 A 股连续竞价时段（9:30—11:30、13:00—15:00，北京时间）。节假日由报价日期是否为当天进一步兜底判断。 */
+export const marketSessionOpen = () => {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts();
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find(part => part.type === type)?.value ?? '';
+  const minutes = Number(value('hour')) * 60 + Number(value('minute'));
+  return !['Sat', 'Sun'].includes(value('weekday')) && ((minutes >= 570 && minutes < 690) || (minutes >= 780 && minutes < 900));
+};
 export const isEtf = (code: string) => /^(5\d{5}|1[5-8]\d{4})$/.test(code.trim());
 // 上交所 ETF / 股票以 5、6、9 开头；其余按深交所处理。
 export const symbolOf = (code: string) => `${/^[569]/.test(code.trim()) ? 'sh' : 'sz'}${code.trim()}`;
