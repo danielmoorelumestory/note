@@ -110,10 +110,11 @@ import { href } from '../../lib/url';
     let lastTrade = row.initialPrice;
     let lastTradeDate = row.date;
     let buys = 0, sells = 0;
-    const trades: Trade[] = [{ date: row.date, side: '建仓', price: row.initialPrice, amount: row.initialAmount, shares, capitalUsed: netCapitalUsed, pnl: -initialFee }];
     const series: EquityPoint[] = [];
     // 接口在非交易日会从下一交易日开始返回；该首个实际交易日仍视为建仓日。
-    const openingDay = candles.find(candle => candle.date >= row.date)?.date;
+    const openingCandle = candles.find(candle => candle.date >= row.date), openingDay = openingCandle?.date;
+    // 建仓当笔总盈亏按建仓日收盘价结算持仓市值。
+    const trades: Trade[] = [{ date: row.date, side: '建仓', price: row.initialPrice, amount: row.initialAmount, shares, capitalUsed: netCapitalUsed, pnl: shares * (openingCandle?.close ?? row.initialPrice) - row.initialAmount - initialFee }];
     for (const candle of candles) {
       // 建仓日仅按用户输入的建仓价格建立初始仓位，不读取当日高低价，也绝不触发网格。
       if (candle.date === openingDay) {

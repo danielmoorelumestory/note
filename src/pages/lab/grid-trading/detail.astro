@@ -13,7 +13,7 @@ const savedUrl = href('lab/grid-trading/saved');
     <div class="chart-head"><div><h2>资金与收盘价变化曲线</h2><p>当前标的的历史回测数据；收盘价及预计买卖价使用右侧刻度</p></div><div class="legend"><span class="line position"></span>持仓市值 <span class="line capital"></span>占用本金 <span class="line profit"></span>总盈亏 <span class="line close"></span>收盘价 <span class="line buy-level"></span>预计买入 <span class="line sell-level"></span>预计卖出</div></div>
     <div class="chart-scroll"><svg id="equity-chart" viewBox="0 0 920 300" role="img" aria-label="当前标的的资金与收盘价变化曲线"><text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">读取已保存回测数据后显示曲线</text></svg></div>
   </section>
-  <section class="history"><h2>历史成交</h2><p>成交价格、成交金额、成交份额可直接修改为真实成交值（如按 100 份整数倍成交），修改份额时金额按“份额 × 成交价”计算；修改后该笔及之后的持仓、盈亏、网格价位会重新计算。持仓市值按该笔成交价估值；“当时占用本金”仅统计成交金额，不含手续费，其最高值与回测摘要中的“最多使用本金”一致。最新成交在最上方。</p><div class="table-shell"><table class="detail-table"><thead><tr><th>日期</th><th>操作</th><th>成交价格</th><th>成交金额</th><th>成交份额</th><th>成交后持仓份额</th><th>成交后持仓市值</th><th>当时占用本金</th><th>当时总盈亏</th></tr></thead><tbody id="trades"></tbody></table></div></section>
+  <section class="history"><h2>历史成交</h2><p>成交价格、成交金额、成交份额可直接修改为真实成交值（如按 100 份整数倍成交），修改份额时金额按“份额 × 成交价”计算；修改后该笔及之后的持仓、盈亏、网格价位会重新计算，并自动同步到云端。持仓市值按该笔成交价估值；“当时占用本金”仅统计成交金额，不含手续费，其最高值与回测摘要中的“最多使用本金”一致。最新成交在最上方。</p><p id="sync-note" class="sync-note" role="status" hidden></p><div class="table-shell"><table class="detail-table"><thead><tr><th>日期</th><th>操作</th><th>成交价格</th><th>成交金额</th><th>成交份额</th><th>成交后持仓份额</th><th>成交后持仓市值</th><th>当时占用本金</th><th>当时总盈亏</th></tr></thead><tbody id="trades"></tbody></table></div></section>
 </Base>
 
 <script>
@@ -50,6 +50,7 @@ const savedUrl = href('lab/grid-trading/saved');
       series?: EquityPoint[];
     };
   };
+  const syncEndpoint = 'https://grid-trading-sync.danielmoore-b0c.workers.dev', syncNoticeKey = 'grid-trading-sync-notice';
   const key = 'grid-trading-saved-v1'; const id = new URLSearchParams(location.search).get('id');
   const money = (v: number) => `${v >= 0 ? '+' : '-'}¥${Math.abs(v).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const price = (v?: number) => typeof v === 'number' && Number.isFinite(v) ? `¥${v.toFixed(3)}` : '—';
@@ -96,6 +97,8 @@ const savedUrl = href('lab/grid-trading/saved');
     });
     document.querySelector('#trades')!.innerHTML = tradeRows.reverse().join('');
     bindPriceEditing(record);
+    const syncNotice = sessionStorage.getItem(syncNoticeKey);
+    if (syncNotice) { sessionStorage.removeItem(syncNoticeKey); const note = document.querySelector('#sync-note') as HTMLElement; note.textContent = syncNotice; note.hidden = false; }
     renderChart(record.result.series ?? [], record.result.nextBuy, record.result.nextSell);
     void refreshRecord(record);
   }
@@ -106,44 +109,50 @@ const savedUrl = href('lab/grid-trading/saved');
 
   function editableCell(t: Trade, field: AdjustField) {
     const config = {
-      price: { digits: 3, step: '0.001', label: '成交价格', value: t.price, model: t.modelPrice, text: (v: number) => v.toFixed(3) },
-      amount: { digits: 2, step: '0.01', label: '成交金额', value: t.amount, model: t.modelAmount, text: (v: number) => `¥${v.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}` },
+      price: { digits: 3, step: '0.001', label: '成交价格', value: t.price, model: t.modelPrice },
+      amount: { digits: 2, step: '0.01', label: '成交金额', value: t.amount, model: t.modelAmount },
       // 旧记录没有 quantity，按成交金额 ÷ 成交价反推。
-      shares: { digits: 2, step: '100', label: '成交份额', value: t.quantity ?? t.amount / t.price, model: t.modelQuantity, text: (v: number) => v.toLocaleString('zh-CN', { maximumFractionDigits: 2 }) },
+      shares: { digits: 2, step: '100', label: '成交份额', value: t.quantity ?? t.amount / t.price, model: t.modelQuantity },
     }[field];
     const adjusted = typeof config.model === 'number';
     const shown = field === 'shares' ? String(Number(config.value.toFixed(2))) : config.value.toFixed(config.digits);
-    const modelText = adjusted ? config.text(config.model!) : '';
-    const reset = adjusted ? `<button type="button" class="price-reset" data-reset="${t.date}" data-field="${field}" title="恢复为计算值 ${modelText}">原 ${modelText} ↺</button>` : '';
-    return `<span class="price-edit"><input class="price-input${field === 'price' ? '' : ' amount-input'}${adjusted ? ' adjusted' : ''}" type="number" inputmode="decimal" step="${config.step}" min="0.001" value="${shown}" data-date="${t.date}" data-field="${field}" data-digits="${config.digits}" data-original="${Number(shown).toFixed(config.digits)}" aria-label="${t.date} ${config.label}">${reset}</span>`;
+    return `<span class="price-edit"><input class="price-input${field === 'price' ? '' : ' amount-input'}${adjusted ? ' adjusted' : ''}" type="number" inputmode="decimal" step="${config.step}" min="0.001" value="${shown}" data-date="${t.date}" data-field="${field}" data-digits="${config.digits}" data-original="${Number(shown).toFixed(config.digits)}" aria-label="${t.date} ${config.label}"><button type="button" class="confirm-edit" hidden>确认</button></span>`;
   }
 
   function bindPriceEditing(saved: RecordItem) {
     const table = document.querySelector('#trades') as HTMLElement;
-    const commit = (field: AdjustField, date: string, value?: number) => {
+    const commit = (field: AdjustField, date: string, value: number) => {
       const adjustments = adjustmentsOf(saved);
       const next: Adjustments = { price: { ...adjustments.price }, amount: { ...adjustments.amount }, shares: { ...adjustments.shares } };
-      // 金额与份额互相决定，同一笔只保留最后修改的那一项；恢复任一项则两者一起恢复。
+      // 金额与份额互相决定，同一笔只保留最后修改的那一项。
       if (field !== 'price') { delete next.amount![date]; delete next.shares![date]; }
       else delete next.price![date];
-      if (value !== undefined) next[field]![date] = value;
+      next[field]![date] = value;
       void applyOverrides(saved, next);
     };
-    table.addEventListener('change', event => {
-      const input = (event.target as HTMLElement).closest('.price-input') as HTMLInputElement | null;
+    const inputOf = (target: EventTarget | null) => (target as HTMLElement).closest('.price-input') as HTMLInputElement | null;
+    // 输入值与原值不同时显示确认按钮，确认后才保存并重算。
+    table.addEventListener('input', event => {
+      const input = inputOf(event.target);
       if (!input) return;
       const value = Number(input.value), digits = Number(input.dataset.digits);
-      if (!Number.isFinite(value) || value <= 0) { input.value = input.dataset.original!; return; }
-      if (value.toFixed(digits) === input.dataset.original) return;
-      commit(input.dataset.field as AdjustField, input.dataset.date!, Number(value.toFixed(digits)));
+      (input.nextElementSibling as HTMLButtonElement).hidden = !(Number.isFinite(value) && value > 0 && value.toFixed(digits) !== input.dataset.original);
     });
     table.addEventListener('keydown', event => {
-      const input = (event.target as HTMLElement).closest('.price-input') as HTMLInputElement | null;
-      if (input && (event as KeyboardEvent).key === 'Enter') input.blur();
+      const input = inputOf(event.target), key = (event as KeyboardEvent).key;
+      if (!input) return;
+      const button = input.nextElementSibling as HTMLButtonElement;
+      if (key === 'Enter' && !button.hidden) button.click();
+      if (key === 'Escape') { input.value = input.dataset.original!; button.hidden = true; input.blur(); }
     });
     table.addEventListener('click', event => {
-      const button = (event.target as HTMLElement).closest('[data-reset]') as HTMLButtonElement | null;
-      if (button) commit(button.dataset.field as AdjustField, button.dataset.reset!);
+      const button = (event.target as HTMLElement).closest('.confirm-edit') as HTMLButtonElement | null;
+      if (!button) return;
+      const input = button.previousElementSibling as HTMLInputElement;
+      const value = Number(input.value), digits = Number(input.dataset.digits);
+      if (!Number.isFinite(value) || value <= 0) return;
+      button.disabled = true; button.textContent = '计算中…';
+      commit(input.dataset.field as AdjustField, input.dataset.date!, Number(value.toFixed(digits)));
     });
   }
 
@@ -164,29 +173,55 @@ const savedUrl = href('lab/grid-trading/saved');
     try {
       const records = JSON.parse(localStorage.getItem(key) ?? '[]') as RecordItem[];
       localStorage.setItem(key, JSON.stringify(records.map(item => item.id === saved.id ? updated : item)));
-      location.reload();
     } catch {
       document.querySelector('#subtitle')!.textContent = '保存修正值失败，请稍后重试';
+      return;
+    }
+    document.querySelector('#subtitle')!.textContent = '正在同步到云端…';
+    const notice = await pushToCloud(updated);
+    if (notice) sessionStorage.setItem(syncNoticeKey, notice);
+    location.reload();
+  }
+
+  // 仅把本条记录合并进云端（云端版本更新时不覆盖），不改动本机的其它记录；返回需要提示的失败信息。
+  async function pushToCloud(item: RecordItem) {
+    const token = localStorage.getItem('grid-trading-sync-key-v1')?.trim() ?? '';
+    if (token.length < 16) return '修正已保存到本机；尚未设置同步密钥，未同步到云端。';
+    const stamp = (record: RecordItem) => new Date(record.updatedAt ?? record.savedAt).valueOf();
+    try {
+      const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+      const response = await fetch(syncEndpoint, { headers, signal: AbortSignal.timeout(8000) });
+      if (!response.ok) throw new Error('读取云端记录失败');
+      const remote = ((await response.json()).records ?? []) as RecordItem[];
+      const existing = remote.find(record => record.id === item.id);
+      if (existing && stamp(existing) > stamp(item)) return '云端有更新的版本，本次修正未上传，请到“已保存标的”页手动同步。';
+      const records = existing ? remote.map(record => record.id === item.id ? item : record) : [item, ...remote];
+      const put = await fetch(syncEndpoint, { method: 'PUT', headers, body: JSON.stringify({ records }), signal: AbortSignal.timeout(8000) });
+      if (!put.ok) throw new Error('写入云端记录失败');
+      return '';
+    } catch {
+      return '修正已保存到本机，但同步云端失败，请稍后在“已保存标的”页手动同步。';
     }
   }
 
   async function refreshRecord(saved: RecordItem) {
     const today = new Date().toISOString().slice(0, 10);
+    const cacheKey = `grid-trading-market-cache-v1:${saved.row.code}:${saved.row.date}`;
+    type CacheItem = { date: string; candles: Candle[] };
+    let cached: CacheItem | undefined;
+    try { cached = JSON.parse(localStorage.getItem(cacheKey) ?? ''); } catch { /* miss */ }
     // 历史日线每天只需拉取一次；实时价仍可在当日补充一次。
-    if (saved.refreshedOn === today) {
+    // 本机没有日线缓存时（如记录来自云端同步）即使今天已刷新过也要重新拉取，否则只能沿用旧结果。
+    if (saved.refreshedOn === today && cached?.candles?.length) {
       // 用本页会话标记避免刷新后循环重载；新开页面仍会重新取得当日高低价。
-      // 版本号变更时重算已保存记录，避免浏览器会话沿用旧的触发逻辑。
-      const refreshMark = `grid-trading-realtime-refresh-v2:${saved.id}:${today}`;
+      // 版本号变更时重算已保存记录，避免浏览器会话沿用旧的计算逻辑。
+      const refreshMark = `grid-trading-realtime-refresh-v4:${saved.id}:${today}`;
       if (!sessionStorage.getItem(refreshMark)) {
         sessionStorage.setItem(refreshMark, '1');
         await refreshRealtimeSnapshot(saved, today);
       }
       return;
     }
-    const cacheKey = `grid-trading-market-cache-v1:${saved.row.code}:${saved.row.date}`;
-    type CacheItem = { date: string; candles: Candle[] };
-    let cached: CacheItem | undefined;
-    try { cached = JSON.parse(localStorage.getItem(cacheKey) ?? ''); } catch { /* miss */ }
     let candles = cached?.date === today ? cached.candles : undefined;
     document.querySelector('#subtitle')!.textContent = '正在刷新行情并重新计算…';
     try {
@@ -263,7 +298,7 @@ const savedUrl = href('lab/grid-trading/saved');
 
   function calculateFromCandles(row: RecordItem['row'], candles: Candle[], adjustments: Adjustments = {}): RecordItem['result'] {
     const feeRate = .00015, taxRate = /^(5\d{5}|1[5-8]\d{4})$/.test(row.code) ? 0 : .0005;
-    // 有修正值时按真实成交价/成交金额成交，成交价同时作为后续网格的基准价；model* 保留原计算值供恢复。
+    // 有修正值时按真实成交价/成交金额成交，成交价同时作为后续网格的基准价；model* 记录原计算值，用于标记已修正的单元格。
     const pick = (map: PriceOverrides | undefined, date: string) => {
       const value = map?.[date];
       return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
@@ -281,9 +316,10 @@ const savedUrl = href('lab/grid-trading/saved');
     };
     const opening = fillPrice(row.date, row.initialPrice), openingFill = fillAmount(row.date, row.initialAmount, opening.price), openingAmount = openingFill.amount;
     let cash = -openingAmount * feeRate, shares = openingFill.quantity, cost = openingAmount * (1 + feeRate), capitalUsed = openingAmount, maxCapital = capitalUsed, lastTrade = opening.price, lastTradeDate = row.date, realized = 0, buys = 0, sells = 0;
-    const trades: Trade[] = [{ date: row.date, side: '建仓', ...opening, ...openingFill, shares, capitalUsed, pnl: cash }];
+    // 建仓当笔总盈亏按建仓日（首个交易日）收盘价结算持仓市值。
+    const openingCandle = candles.find(candle => candle.date >= row.date), openingDay = openingCandle?.date;
+    const trades: Trade[] = [{ date: row.date, side: '建仓', ...opening, ...openingFill, shares, capitalUsed, pnl: cash + shares * (openingCandle?.close ?? opening.price) - openingAmount }];
     const series: EquityPoint[] = [];
-    const openingDay = candles.find(candle => candle.date >= row.date)?.date;
     for (const candle of candles) {
       if (candle.date !== openingDay) {
         // 日内最低/最高价触及固定买卖价即执行，不再要求突破后反转。
@@ -333,6 +369,8 @@ const savedUrl = href('lab/grid-trading/saved');
   .stats { display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:minmax(96px,auto); gap:1px; overflow:hidden; margin-bottom:28px; border:1px solid #e2e8f0; border-radius:10px; background:#e2e8f0; }
   .history h2 { margin:0 0 4px; font-size:18px; }
   .history > p { margin:0 0 12px; color:#64748b; font-size:12px; }
+  .history > .sync-note { padding:8px 12px; border:1px solid #fcd34d; border-radius:8px; background:#fffbeb; color:#b45309; }
+  .history > .sync-note[hidden] { display:none; }
   .table-shell {
     overflow-x: auto;
     border: 1px solid #e2e8f0;
@@ -376,7 +414,9 @@ const savedUrl = href('lab/grid-trading/saved');
   .detail-table .price-input:focus { outline: none; border-color: #0369a1; background: #fff; box-shadow: 0 0 0 2px rgb(3 105 161 / .15); }
   .detail-table .price-input.adjusted { border-color: #fcd34d; background: #fffbeb; color: #b45309; font-weight: 600; }
   .detail-table .price-input.amount-input { width: 96px; }
-  .detail-table .price-reset { border: 0; padding: 0; background: none; color: #94a3b8; font-size: 10px; cursor: pointer; }
-  .detail-table .price-reset:hover { color: #0369a1; text-decoration: underline; }
+  .detail-table .confirm-edit { border: 1px solid #0369a1; border-radius: 4px; padding: 1px 10px; background: #0369a1; color: #fff; font-size: 11px; line-height: 16px; cursor: pointer; }
+  .detail-table .confirm-edit:hover { background: #075985; }
+  .detail-table .confirm-edit:disabled { opacity: .6; cursor: wait; }
+  .detail-table .confirm-edit[hidden] { display: none; }
   .detail-table .down { color: #16a34a; font-weight: 600; }
 </style>
