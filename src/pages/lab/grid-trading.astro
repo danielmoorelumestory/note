@@ -55,7 +55,7 @@ import { href } from '../../lib/url';
   };
   type Trade = { date: string; side: '建仓' | '买入' | '卖出'; price: number; amount: number; shares: number; capitalUsed: number; pnl: number };
   type EquityPoint = { date: string; current: number; positionValue: number; capitalUsed: number; pnl: number };
-  type Result = { current: number; lastTradeDate: string; lastTrade: number; nextBuy: number; nextSell: number; buys: number; sells: number; maxCapital: number; pnl: number; value: number; realized: number; range: string; trades: Trade[]; series: EquityPoint[] };
+  type Result = { current: number; lastTradeDate: string; lastTrade: number; nextBuy: number; nextSell: number; buyTrigger: number; sellTrigger: number; lowSince?: number; highSince?: number; buys: number; sells: number; maxCapital: number; pnl: number; value: number; realized: number; range: string; trades: Trade[]; series: EquityPoint[] };
   type SavedRecord = { id: string; savedAt: string; row: Omit<Row, 'candles'>; result: Result };
 
   const body = document.querySelector('#grid-body') as HTMLTableSectionElement;
@@ -110,6 +110,7 @@ import { href } from '../../lib/url';
     let lastTrade = row.initialPrice;
     let lastTradeDate = row.date;
     let buys = 0, sells = 0;
+    let lowSince: number | null = null, highSince: number | null = null;
     const series: EquityPoint[] = [];
     // 接口在非交易日会从下一交易日开始返回；该首个实际交易日仍视为建仓日。
     const openingCandle = candles.find(candle => candle.date >= row.date), openingDay = openingCandle?.date;
@@ -121,27 +122,33 @@ import { href } from '../../lib/url';
         series.push({ date: candle.date, current: candle.close, positionValue: shares * candle.close, capitalUsed: netCapitalUsed, pnl: cash + shares * candle.close - row.initialAmount });
         continue;
       }
-      // 触及预设成交价即成交：反弹/回落数值直接计入下一格的固定价格，
-      // 不要求先跌破/突破步长线后再出现反转。
-      const buyPrice = lastTrade - row.step + row.rebound;
-      const sellPrice = lastTrade + row.step - row.pullback;
-      if (candle.low <= buyPrice) {
-        const price = buyPrice;
+      // 先跌破/突破上次成交价一个步长，记录此后的最低/最高点，再反弹/回落设定数值才成交。
+      // 日线无法区分同日高低价先后，达到步长的当天不确认反转，从之后的交易日开始判断。
+      let traded = false;
+      if (lowSince !== null && candle.high >= lowSince + row.rebound) {
+        const price = lowSince + row.rebound; traded = true;
         const qty = row.gridAmount / price;
         const fee = row.gridAmount * feeRate;
         shares += qty; cost += row.gridAmount + fee; cash -= row.gridAmount + fee; netCapitalUsed += row.gridAmount; maxCapital = Math.max(maxCapital, netCapitalUsed); lastTrade = price; lastTradeDate = candle.date; buys++; trades.push({ date: candle.date, side: '买入', price, amount: row.gridAmount, shares, capitalUsed: netCapitalUsed, pnl: cash + shares * price - row.initialAmount });
-      } else if (candle.high >= sellPrice) {
-        const price = sellPrice;
+      } else if (highSince !== null && candle.low <= highSince - row.pullback) {
+        const price = highSince - row.pullback; traded = true;
         const qty = Math.min(shares, row.gridAmount / price);
         if (qty > 0) { shares -= qty; const proceeds = qty * price; const fee = proceeds * feeRate; const tax = isEtf(row.code.trim()) ? 0 : proceeds * stockSellTaxRate; const netProceeds = proceeds - fee - tax; cash += netProceeds; netCapitalUsed -= proceeds; realized += netProceeds - qty * (cost / (shares + qty)); cost -= qty * (cost / (shares + qty)); lastTrade = price; lastTradeDate = candle.date; sells++; trades.push({ date: candle.date, side: '卖出', price, amount: proceeds, shares, capitalUsed: netCapitalUsed, pnl: cash + shares * price - row.initialAmount }); }
+      }
+      if (traded) { lowSince = null; highSince = null; }
+      else {
+        if (candle.low <= lastTrade - row.step) lowSince = Math.min(lowSince ?? candle.low, candle.low);
+        if (candle.high >= lastTrade + row.step) highSince = Math.max(highSince ?? candle.high, candle.high);
       }
       series.push({ date: candle.date, current: candle.close, positionValue: shares * candle.close, capitalUsed: netCapitalUsed, pnl: cash + shares * candle.close - row.initialAmount });
     }
     const current = candles.at(-1)!.close;
-    const nextBuy = lastTrade - row.step + row.rebound;
-    const nextSell = lastTrade + row.step - row.pullback;
+    const buyTrigger = lastTrade - row.step, sellTrigger = lastTrade + row.step;
+    // 已达步长时按期间最低/最高点计算成交价，否则按触发价加反弹/减回落。
+    const nextBuy = (lowSince ?? buyTrigger) + row.rebound;
+    const nextSell = (highSince ?? sellTrigger) - row.pullback;
     const value = cash + shares * current;
-    return { current, lastTradeDate, lastTrade, nextBuy, nextSell, buys, sells, maxCapital, pnl: value - row.initialAmount, value, realized, range: `${candles[0].date} ～ ${candles.at(-1)!.date}`, trades, series };
+    return { current, lastTradeDate, lastTrade, nextBuy, nextSell, buyTrigger, sellTrigger, lowSince: lowSince ?? undefined, highSince: highSince ?? undefined, buys, sells, maxCapital, pnl: value - row.initialAmount, value, realized, range: `${candles[0].date} ～ ${candles.at(-1)!.date}`, trades, series };
   }
   function updateComputed(row: Row) {
     const tr = body.querySelector(`[data-row="${row.id}"]`) as HTMLTableRowElement | null;
@@ -174,13 +181,15 @@ import { href } from '../../lib/url';
     const y = (value: number) => top + ((yMax - value) / (yMax - yMin)) * chartHeight;
     const priceY = (value: number) => top + ((priceMax - value) / (priceMax - priceMin)) * chartHeight;
     const path = (field: keyof Omit<EquityPoint, 'date'>) => series.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${y(point[field]).toFixed(1)}`).join('');
+    // 占用本金只在成交日跳变：先沿上一日数值水平延伸，到成交日再竖直跳到新值（阶梯线）。
+    const capitalPath = series.map((point, index) => index ? `H${x(index).toFixed(1)}V${y(point.capitalUsed).toFixed(1)}` : `M${x(0).toFixed(1)},${y(point.capitalUsed).toFixed(1)}`).join('');
     const grid = Array.from({ length: 5 }, (_, index) => { const value = yMin + ((yMax - yMin) * index / 4); const yy = y(value); return `<line x1="${left}" x2="${width - right}" y1="${yy}" y2="${yy}" stroke="#e2e8f0"/><text x="${left - 8}" y="${yy + 4}" text-anchor="end" fill="#94a3b8" font-size="10">${(value / 10000).toFixed(1)}万</text>`; }).join('');
     const priceLabels = Array.from({ length: 5 }, (_, index) => { const value = priceMin + ((priceMax - priceMin) * index / 4); const yy = priceY(value); return `<text x="${width - right + 8}" y="${yy + 4}" fill="#64748b" font-size="10">${format.format(value)}</text>`; }).join('');
     const labels = [0, Math.floor((series.length - 1) / 2), series.length - 1].map(index => `<text x="${x(index)}" y="${height - 12}" text-anchor="middle" fill="#94a3b8" font-size="10">${series[index].date}</text>`).join('');
     const zero = min < 0 ? `<line x1="${left}" x2="${width - right}" y1="${y(0)}" y2="${y(0)}" stroke="#475569" stroke-width="1.5" stroke-dasharray="6 4"/>` : '';
     const buyY = priceY(nextBuy), sellY = priceY(nextSell);
     const priceLevels = `<line x1="${left}" x2="${width - right}" y1="${buyY}" y2="${buyY}" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${width - right + 8}" y="${buyY + 4}" fill="#16a34a" font-size="10">买 ${format.format(nextBuy)}</text><line x1="${left}" x2="${width - right}" y1="${sellY}" y2="${sellY}" stroke="#ea580c" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${width - right + 8}" y="${sellY + 4}" fill="#ea580c" font-size="10">卖 ${format.format(nextSell)}</text>`;
-    svg.innerHTML = `<g>${grid}${zero}${priceLabels}${priceLevels}</g><path d="${path('positionValue')}" fill="none" stroke="#2563eb" stroke-width="1.5"/><path d="${path('capitalUsed')}" fill="none" stroke="#f59e0b" stroke-width="1.5"/><path d="${path('pnl')}" fill="none" stroke="#dc2626" stroke-width="1.5"/><path d="${series.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${priceY(point.current).toFixed(1)}`).join('')}" fill="none" stroke="#7c3aed" stroke-width="1.5"/>${labels}<g class="chart-crosshair" visibility="hidden"><line class="crosshair-v" y1="${top}" y2="${height - bottom}" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3"/><line class="crosshair-h" x1="${left}" x2="${width - right}" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3"/><circle class="crosshair-dot position" r="4" fill="#2563eb" stroke="#fff" stroke-width="2"/><circle class="crosshair-dot capital" r="4" fill="#f59e0b" stroke="#fff" stroke-width="2"/><circle class="crosshair-dot profit" r="4" fill="#dc2626" stroke="#fff" stroke-width="2"/><circle class="crosshair-dot current" r="4" fill="#7c3aed" stroke="#fff" stroke-width="2"/><g class="chart-tooltip"><rect fill="#0f172a" fill-opacity=".94" rx="6"/><text class="tooltip-date" x="10" y="17" fill="#f8fafc" font-size="10" font-weight="700"/><text class="tooltip-current" x="10" y="35" fill="#f8fafc" font-size="10"/><text class="tooltip-position" x="10" y="53" fill="#f8fafc" font-size="10"/><text class="tooltip-capital" x="10" y="71" fill="#f8fafc" font-size="10"/><text class="tooltip-profit" x="10" y="89" fill="#f8fafc" font-size="10"/><text class="tooltip-buy-sell" x="10" y="107" fill="#f8fafc" font-size="10"/></g></g><rect class="chart-hit-area" x="${left}" y="${top}" width="${chartWidth}" height="${chartHeight}" fill="transparent" style="cursor:crosshair"/>`;
+    svg.innerHTML = `<g>${grid}${zero}${priceLabels}${priceLevels}</g><path d="${path('positionValue')}" fill="none" stroke="#2563eb" stroke-width="1.5"/><path d="${capitalPath}" fill="none" stroke="#f59e0b" stroke-width="1.5"/><path d="${path('pnl')}" fill="none" stroke="#dc2626" stroke-width="1.5"/><path d="${series.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${priceY(point.current).toFixed(1)}`).join('')}" fill="none" stroke="#7c3aed" stroke-width="1.5"/>${labels}<g class="chart-crosshair" visibility="hidden"><line class="crosshair-v" y1="${top}" y2="${height - bottom}" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3"/><line class="crosshair-h" x1="${left}" x2="${width - right}" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3"/><circle class="crosshair-dot position" r="4" fill="#2563eb" stroke="#fff" stroke-width="2"/><circle class="crosshair-dot capital" r="4" fill="#f59e0b" stroke="#fff" stroke-width="2"/><circle class="crosshair-dot profit" r="4" fill="#dc2626" stroke="#fff" stroke-width="2"/><circle class="crosshair-dot current" r="4" fill="#7c3aed" stroke="#fff" stroke-width="2"/><g class="chart-tooltip"><rect fill="#0f172a" fill-opacity=".94" rx="6"/><text class="tooltip-date" x="10" y="17" fill="#f8fafc" font-size="10" font-weight="700"/><text class="tooltip-current" x="10" y="35" fill="#f8fafc" font-size="10"/><text class="tooltip-position" x="10" y="53" fill="#f8fafc" font-size="10"/><text class="tooltip-capital" x="10" y="71" fill="#f8fafc" font-size="10"/><text class="tooltip-profit" x="10" y="89" fill="#f8fafc" font-size="10"/><text class="tooltip-buy-sell" x="10" y="107" fill="#f8fafc" font-size="10"/></g></g><rect class="chart-hit-area" x="${left}" y="${top}" width="${chartWidth}" height="${chartHeight}" fill="transparent" style="cursor:crosshair"/>`;
     const crosshair = svg.querySelector('.chart-crosshair') as SVGGElement;
     const vertical = svg.querySelector('.crosshair-v') as SVGLineElement;
     const horizontal = svg.querySelector('.crosshair-h') as SVGLineElement;

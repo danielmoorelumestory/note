@@ -14,7 +14,7 @@ const detailUrl = href('lab/grid-trading/detail');
   </header>
   <div class="actions"><a class="btn-back" href={calculatorUrl}>← 返回计算器</a><button id="clear" class="btn-clear" type="button">清空全部</button></div>
   <section class="sync-panel" aria-label="云端同步">
-    <div><strong>云端同步</strong><p>在另一台设备输入同一同步密钥，即可访问同一份回测记录。</p></div>
+    <div><strong>云端同步</strong><p>在另一台设备输入同一同步密钥，即可访问同一份回测记录；删除记录会自动同步到云端。</p></div>
     <label>同步密钥 <input id="sync-key" type="text" autocomplete="off" spellcheck="false"></label>
     <button id="copy-sync-key" type="button">复制密钥</button>
     <button id="sync-records" class="sync-primary" type="button">同步云端</button>
@@ -39,7 +39,13 @@ const detailUrl = href('lab/grid-trading/detail');
       trades?: { date: string; side: string; amount?: number; capitalUsed?: number }[];
     };
   };
+  // 云端删除标记：PUT 会整体覆盖云端，只删本机的话下次合并会被云端旧数据“复活”，
+  // 因此删除时记下 id 与删除时间，同步时以墓碑记录参与合并并一并写回云端。
+  type Tombstone = { id: string; savedAt: string; updatedAt: string; deleted: true };
+  type CloudItem = RecordItem | Tombstone;
   const key = 'grid-trading-saved-v1';
+  const deletedKey = 'grid-trading-deleted-v1';
+  const tombstoneTtl = 180 * 24 * 3600 * 1000;
   const syncKeyStorage = 'grid-trading-sync-key-v1';
   const syncEndpoint = 'https://grid-trading-sync.danielmoore-b0c.workers.dev';
   const container = document.querySelector('#content-area') as HTMLElement;
@@ -72,6 +78,48 @@ const detailUrl = href('lab/grid-trading/detail');
   if (!storedSyncKey) localStorage.setItem(syncKeyStorage, syncInput.value);
 
   function read(): RecordItem[] { try { return JSON.parse(localStorage.getItem(key) ?? '[]'); } catch { return []; } }
+  function readDeleted(): Record<string, string> { try { return JSON.parse(localStorage.getItem(deletedKey) ?? '{}'); } catch { return {}; } }
+  function removeRecords(ids: string[]) {
+    const now = new Date().toISOString(), deleted = readDeleted();
+    for (const id of ids) deleted[id] = now;
+    localStorage.setItem(deletedKey, JSON.stringify(deleted));
+    localStorage.setItem(key, JSON.stringify(read().filter(item => !ids.includes(item.id))));
+    render();
+    void syncRecords({ afterDelete: true });
+  }
+  const stamp = (item: CloudItem) => new Date(item.updatedAt ?? item.savedAt).valueOf();
+  const isTombstone = (item: CloudItem): item is Tombstone => (item as Tombstone).deleted === true;
+
+  async function syncRecords({ afterDelete = false } = {}) {
+    const token = syncInput.value.trim();
+    if (token.length < 16) { syncStatus.textContent = afterDelete ? '已在本机删除；同步密钥不足 16 位，未同步到云端。' : '同步密钥至少需要 16 位。'; return; }
+    const button = document.querySelector('#sync-records') as HTMLButtonElement;
+    button.disabled = true; syncStatus.textContent = afterDelete ? '正在同步删除到云端…' : '正在同步…';
+    try {
+      const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+      const response = await fetch(syncEndpoint, { headers });
+      if (!response.ok) throw new Error('读取云端记录失败');
+      const remote = ((await response.json()).records ?? []) as CloudItem[];
+      const tombstones: Tombstone[] = Object.entries(readDeleted()).map(([id, at]) => ({ id, savedAt: at, updatedAt: at, deleted: true }));
+      // 同一 id 以最后修改/删除时间较新的一方为准；删除晚于修改则删除生效，反之保留记录。
+      const merged = new Map<string, CloudItem>();
+      for (const item of [...read(), ...tombstones, ...remote]) {
+        const previous = merged.get(item.id);
+        if (!previous || stamp(item) >= stamp(previous)) merged.set(item.id, item);
+      }
+      const values = [...merged.values()];
+      const records = values.filter((item): item is RecordItem => !isTombstone(item));
+      // 墓碑保留 180 天，足够让其它设备同步到删除；过期后清理，避免占满云端 200 条上限。
+      const alive = values.filter(isTombstone).filter(item => Date.now() - stamp(item) < tombstoneTtl);
+      const put = await fetch(syncEndpoint, { method: 'PUT', headers, body: JSON.stringify({ records: [...records, ...alive] }) });
+      if (!put.ok) throw new Error('写入云端记录失败');
+      localStorage.setItem(key, JSON.stringify(records));
+      localStorage.setItem(deletedKey, JSON.stringify(Object.fromEntries(alive.map(item => [item.id, item.updatedAt]))));
+      render(); syncStatus.textContent = afterDelete ? `删除已同步到云端，现有 ${records.length} 条记录。` : `同步完成，共 ${records.length} 条记录。`;
+    } catch {
+      syncStatus.textContent = afterDelete ? '已在本机删除，但同步云端失败；稍后点击“同步云端”即可补同步。' : '同步失败，请检查网络和同步密钥。';
+    } finally { button.disabled = false; }
+  }
 
   function render() {
     const records = read();
@@ -166,10 +214,7 @@ const detailUrl = href('lab/grid-trading/detail');
     const button = target.closest('.btn-delete') as HTMLButtonElement | null;
     if (button && button.dataset.id) {
       event.stopPropagation();
-      if (confirm('确认删除该回测记录？')) {
-        localStorage.setItem(key, JSON.stringify(read().filter(item => item.id !== button.dataset.id)));
-        render();
-      }
+      if (confirm('确认删除该回测记录？删除会同步到云端。')) removeRecords([button.dataset.id]);
       return;
     }
     const tr = target.closest('tbody tr') as HTMLTableRowElement | null;
@@ -183,36 +228,10 @@ const detailUrl = href('lab/grid-trading/detail');
     await navigator.clipboard.writeText(syncInput.value.trim());
     syncStatus.textContent = '同步密钥已复制。';
   });
-  document.querySelector('#sync-records')!.addEventListener('click', async () => {
-    const token = syncInput.value.trim();
-    if (token.length < 16) { syncStatus.textContent = '同步密钥至少需要 16 位。'; return; }
-    const button = document.querySelector('#sync-records') as HTMLButtonElement;
-    button.disabled = true; syncStatus.textContent = '正在同步…';
-    try {
-      const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
-      const response = await fetch(syncEndpoint, { headers });
-      if (!response.ok) throw new Error('读取云端记录失败');
-      const remote = (await response.json()).records as RecordItem[];
-      const merged = new Map<string, RecordItem>();
-      for (const item of [...read(), ...remote]) {
-        const previous = merged.get(item.id);
-        if (!previous || new Date(item.updatedAt ?? item.savedAt).valueOf() >= new Date(previous.updatedAt ?? previous.savedAt).valueOf()) merged.set(item.id, item);
-      }
-      const records = [...merged.values()];
-      const put = await fetch(syncEndpoint, { method: 'PUT', headers, body: JSON.stringify({ records }) });
-      if (!put.ok) throw new Error('写入云端记录失败');
-      localStorage.setItem(key, JSON.stringify(records));
-      render(); syncStatus.textContent = `同步完成，共 ${records.length} 条记录。`;
-    } catch {
-      syncStatus.textContent = '同步失败，请检查网络和同步密钥。';
-    } finally { button.disabled = false; }
-  });
+  document.querySelector('#sync-records')!.addEventListener('click', () => void syncRecords());
 
   document.querySelector('#clear')!.addEventListener('click', () => {
-    if (confirm('确认清空所有已保存的回测？')) {
-      localStorage.removeItem(key);
-      render();
-    }
+    if (confirm('确认清空所有已保存的回测？清空会同步到云端。')) removeRecords(read().map(item => item.id));
   });
 
   render();
