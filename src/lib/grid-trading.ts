@@ -67,6 +67,8 @@ export const marketSessionOpen = () => {
   return !['Sat', 'Sun'].includes(value('weekday')) && ((minutes >= 570 && minutes < 690) || (minutes >= 780 && minutes < 900));
 };
 export const isEtf = (code: string) => /^(5\d{5}|1[5-8]\d{4})$/.test(code.trim());
+/** ETF 每笔买卖佣金按成交额万分之 1.5 计算，最低收取 ¥5；股票维持原比例佣金及卖出印花税口径。 */
+const commission = (code: string, amount: number) => isEtf(code) ? Math.max(5, amount * FEE_RATE) : amount * FEE_RATE;
 // 上交所 ETF / 股票以 5、6、9 开头；其余按深交所处理。
 export const symbolOf = (code: string) => `${/^[569]/.test(code.trim()) ? 'sh' : 'sz'}${code.trim()}`;
 
@@ -225,7 +227,8 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
     return amount === undefined ? { amount: modelAmount, quantity: modelAmount / price } : { amount, quantity: amount / price, modelAmount };
   };
   const opening = fillPrice(row.date, row.initialPrice), openingFill = fillAmount(row.date, row.initialAmount, opening.price), openingAmount = openingFill.amount;
-  let cash = -openingAmount * FEE_RATE, shares = openingFill.quantity, cost = openingAmount * (1 + FEE_RATE), capitalUsed = openingAmount, maxCapital = capitalUsed;
+  const openingFee = commission(row.code, openingAmount);
+  let cash = -openingFee, shares = openingFill.quantity, cost = openingAmount + openingFee, capitalUsed = openingAmount, maxCapital = capitalUsed;
   let lastTrade = opening.price, lastTradeDate = row.date, realized = 0, buys = 0, sells = 0;
   // 接口在非交易日会从下一交易日开始返回；该首个实际交易日视为建仓日，建仓当笔总盈亏按其收盘价结算。
   const openingCandle = candles.find(candle => candle.date >= row.date), openingDay = openingCandle?.date;
@@ -236,7 +239,7 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
   const paramsAt = (date: string) => stages.find(stage => date <= stage.until) ?? row;
   const buy = (date: string, modelPrice: number) => {
     const fill = fillPrice(date, modelPrice), tradePrice = fill.price;
-    const amountFill = fillAmount(date, row.gridAmount, tradePrice), amount = amountFill.amount, fee = amount * FEE_RATE;
+    const amountFill = fillAmount(date, row.gridAmount, tradePrice), amount = amountFill.amount, fee = commission(row.code, amount);
     shares += amountFill.quantity; cost += amount + fee; cash -= amount + fee; capitalUsed += amount; maxCapital = Math.max(maxCapital, capitalUsed);
     lastTrade = tradePrice; lastTradeDate = date; buys++;
     trades.push({ date, side: '买入', ...fill, ...amountFill, shares, capitalUsed, pnl: cash + shares * tradePrice - openingAmount });
@@ -248,7 +251,7 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
     // 修正后的卖出份额不能超过当前全部持仓。
     const amountFill = fillAmount(date, modelProceeds, tradePrice), quantity = Math.min(shares, amountFill.quantity);
     if (quantity > 0) {
-      const proceeds = quantity * tradePrice, netProceeds = proceeds - proceeds * FEE_RATE - proceeds * taxRate, unitCost = cost / shares;
+      const proceeds = quantity * tradePrice, netProceeds = proceeds - commission(row.code, proceeds) - proceeds * taxRate, unitCost = cost / shares;
       shares -= quantity; cash += netProceeds; capitalUsed -= proceeds; realized += netProceeds - quantity * unitCost; cost -= quantity * unitCost;
       lastTrade = tradePrice; lastTradeDate = date; sells++;
       trades.push({ date, side: '卖出', ...fill, ...amountFill, amount: proceeds, quantity, shares, capitalUsed, pnl: cash + shares * tradePrice - openingAmount });
@@ -311,7 +314,7 @@ function applyLedger(row: GridParams, base: GridResult, adjustments: Adjustments
     const buy = side === '买入';
     return {
       ds: (buy ? quantity : -quantity) * sign,
-      dcash: (buy ? -amount * (1 + FEE_RATE) : amount * (1 - FEE_RATE - taxRate)) * sign,
+      dcash: (buy ? -amount - commission(row.code, amount) : amount - commission(row.code, amount) - amount * taxRate) * sign,
       dcap: (buy ? amount : -amount) * sign,
       dbuys: (buy ? 1 : 0) * sign, dsells: (buy ? 0 : 1) * sign,
     };
@@ -327,7 +330,7 @@ function applyLedger(row: GridParams, base: GridResult, adjustments: Adjustments
     let index = 0;
     base.trades.forEach((trade, i) => { if (trade.date <= date) index = i; });
     const trade = base.trades[index];
-    return { shares: trade.shares, capitalUsed: trade.capitalUsed ?? 0, cash: index === 0 ? -openingAmount * FEE_RATE : trade.pnl + openingAmount - trade.shares * trade.price };
+    return { shares: trade.shares, capitalUsed: trade.capitalUsed ?? 0, cash: index === 0 ? -commission(row.code, openingAmount) : trade.pnl + openingAmount - trade.shares * trade.price };
   };
   const manualRows: Trade[] = [];
   let cumulative = { ds: 0, dcash: 0, dcap: 0 };
