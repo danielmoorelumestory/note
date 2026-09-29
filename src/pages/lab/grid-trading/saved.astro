@@ -27,6 +27,7 @@ const detailUrl = href('lab/grid-trading/detail');
   type RecordItem = {
     id: string;
     savedAt: string;
+    updatedAt?: string;
     row: {
       name: string; code: string; date: string; initialPrice: number; initialAmount: number;
       step: number; rebound: number; pullback: number; gridAmount: number;
@@ -195,7 +196,7 @@ const detailUrl = href('lab/grid-trading/detail');
       const merged = new Map<string, RecordItem>();
       for (const item of [...read(), ...remote]) {
         const previous = merged.get(item.id);
-        if (!previous || new Date(item.savedAt).valueOf() >= new Date(previous.savedAt).valueOf()) merged.set(item.id, item);
+        if (!previous || new Date(item.updatedAt ?? item.savedAt).valueOf() >= new Date(previous.updatedAt ?? previous.savedAt).valueOf()) merged.set(item.id, item);
       }
       const records = [...merged.values()];
       const put = await fetch(syncEndpoint, { method: 'PUT', headers, body: JSON.stringify({ records }) });

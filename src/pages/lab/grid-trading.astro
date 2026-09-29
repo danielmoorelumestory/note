@@ -109,8 +109,6 @@ import { href } from '../../lib/url';
     let maxCapital = netCapitalUsed;
     let lastTrade = row.initialPrice;
     let lastTradeDate = row.date;
-    let lowSince: number | null = null;
-    let highSince: number | null = null;
     let buys = 0, sells = 0;
     const trades: Trade[] = [{ date: row.date, side: '建仓', price: row.initialPrice, amount: row.initialAmount, shares, capitalUsed: netCapitalUsed, pnl: -initialFee }];
     const series: EquityPoint[] = [];
@@ -122,26 +120,25 @@ import { href } from '../../lib/url';
         series.push({ date: candle.date, current: candle.close, positionValue: shares * candle.close, capitalUsed: netCapitalUsed, pnl: cash + shares * candle.close - row.initialAmount });
         continue;
       }
-      // 买入和卖出须先越过上次成交价一个网格，再在之后的交易日确认反转。
-      if (candle.low <= lastTrade - row.step) lowSince = lowSince === null ? candle.low : Math.min(lowSince, candle.low);
-      if (candle.high >= lastTrade + row.step) highSince = highSince === null ? candle.high : Math.max(highSince, candle.high);
-      if (lowSince !== null && candle.high >= lowSince + row.rebound) {
-        const price = lowSince + row.rebound;
+      // 触及预设成交价即成交：反弹/回落数值直接计入下一格的固定价格，
+      // 不要求先跌破/突破步长线后再出现反转。
+      const buyPrice = lastTrade - row.step + row.rebound;
+      const sellPrice = lastTrade + row.step - row.pullback;
+      if (candle.low <= buyPrice) {
+        const price = buyPrice;
         const qty = row.gridAmount / price;
         const fee = row.gridAmount * feeRate;
-        shares += qty; cost += row.gridAmount + fee; cash -= row.gridAmount + fee; netCapitalUsed += row.gridAmount; maxCapital = Math.max(maxCapital, netCapitalUsed); lastTrade = price; lastTradeDate = candle.date; buys++; trades.push({ date: candle.date, side: '买入', price, amount: row.gridAmount, shares, capitalUsed: netCapitalUsed, pnl: cash + shares * price - row.initialAmount }); lowSince = null; highSince = null;
-      } else if (highSince !== null && candle.low <= highSince - row.pullback) {
-        const price = highSince - row.pullback;
+        shares += qty; cost += row.gridAmount + fee; cash -= row.gridAmount + fee; netCapitalUsed += row.gridAmount; maxCapital = Math.max(maxCapital, netCapitalUsed); lastTrade = price; lastTradeDate = candle.date; buys++; trades.push({ date: candle.date, side: '买入', price, amount: row.gridAmount, shares, capitalUsed: netCapitalUsed, pnl: cash + shares * price - row.initialAmount });
+      } else if (candle.high >= sellPrice) {
+        const price = sellPrice;
         const qty = Math.min(shares, row.gridAmount / price);
         if (qty > 0) { shares -= qty; const proceeds = qty * price; const fee = proceeds * feeRate; const tax = isEtf(row.code.trim()) ? 0 : proceeds * stockSellTaxRate; const netProceeds = proceeds - fee - tax; cash += netProceeds; netCapitalUsed -= proceeds; realized += netProceeds - qty * (cost / (shares + qty)); cost -= qty * (cost / (shares + qty)); lastTrade = price; lastTradeDate = candle.date; sells++; trades.push({ date: candle.date, side: '卖出', price, amount: proceeds, shares, capitalUsed: netCapitalUsed, pnl: cash + shares * price - row.initialAmount }); }
-        highSince = null; lowSince = null;
       }
       series.push({ date: candle.date, current: candle.close, positionValue: shares * candle.close, capitalUsed: netCapitalUsed, pnl: cash + shares * candle.close - row.initialAmount });
     }
     const current = candles.at(-1)!.close;
-    // 正在等待的极值决定下一笔回转价；未触及步长时，显示首个触发阈值。
-    const nextBuy = lowSince !== null ? lowSince + row.rebound : lastTrade - row.step + row.rebound;
-    const nextSell = highSince !== null ? highSince - row.pullback : lastTrade + row.step - row.pullback;
+    const nextBuy = lastTrade - row.step + row.rebound;
+    const nextSell = lastTrade + row.step - row.pullback;
     const value = cash + shares * current;
     return { current, lastTradeDate, lastTrade, nextBuy, nextSell, buys, sells, maxCapital, pnl: value - row.initialAmount, value, realized, range: `${candles[0].date} ～ ${candles.at(-1)!.date}`, trades, series };
   }
