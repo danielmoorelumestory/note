@@ -12,7 +12,7 @@ const detailUrl = href('lab/grid-trading/detail');
     <h1>已保存标的</h1>
     <p class="lede">保存在当前浏览器。点击详情可查看每次建仓、买入和卖出的历史记录。</p>
   </header>
-  <div class="actions"><a class="btn-back" href={calculatorUrl}>← 返回计算器</a><button id="clear" class="btn-clear" type="button">清空全部</button></div>
+  <div class="actions"><a class="btn-back" href={calculatorUrl}>← 返回计算器</a><span id="market-status" class="market-status" role="status"></span><button id="clear" class="btn-clear" type="button">清空全部</button></div>
   <section class="sync-panel" aria-label="云端同步">
     <div><strong>云端同步</strong><p>在另一台设备输入同一同步密钥，即可访问同一份回测记录；删除记录会自动同步到云端。</p></div>
     <label>同步密钥 <input id="sync-key" type="text" autocomplete="off" spellcheck="false"></label>
@@ -24,39 +24,18 @@ const detailUrl = href('lab/grid-trading/detail');
 </Base>
 
 <script>
-  type RecordItem = {
-    id: string;
-    savedAt: string;
-    updatedAt?: string;
-    row: {
-      name: string; code: string; date: string; initialPrice: number; initialAmount: number;
-      step: number; rebound: number; pullback: number; gridAmount: number;
-    };
-    result: {
-      current: number; lastTrade?: number; nextBuy?: number; nextSell?: number;
-      buys: number; sells: number; maxCapital: number; pnl: number; value: number;
-      realized?: number; range: string;
-      trades?: { date: string; side: string; amount?: number; capitalUsed?: number }[];
-    };
-  };
-  // 云端删除标记：PUT 会整体覆盖云端，只删本机的话下次合并会被云端旧数据“复活”，
-  // 因此删除时记下 id 与删除时间，同步时以墓碑记录参与合并并一并写回云端。
-  type Tombstone = { id: string; savedAt: string; updatedAt: string; deleted: true };
-  type CloudItem = RecordItem | Tombstone;
-  const key = 'grid-trading-saved-v1';
-  const deletedKey = 'grid-trading-deleted-v1';
-  const tombstoneTtl = 180 * 24 * 3600 * 1000;
-  const syncKeyStorage = 'grid-trading-sync-key-v1';
-  const syncEndpoint = 'https://grid-trading-sync.danielmoore-b0c.workers.dev';
+  import {
+    readRecords, writeRecords, refreshRecords, removeRecords, syncAll, gridStatus, formatMoney, formatPrice, SYNC_KEY_STORAGE,
+    type SavedRecord,
+  } from '../../../lib/grid-trading';
+
   const container = document.querySelector('#content-area') as HTMLElement;
   const detailUrl = container.dataset.detailUrl!;
   const calcUrl = container.dataset.calcUrl!;
-  const format = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const marketStatus = document.querySelector('#market-status') as HTMLElement;
   const formatInt = new Intl.NumberFormat('zh-CN', { maximumFractionDigits: 0 });
-  const money = (v: number) => `${v >= 0 ? '+' : '-'}¥${format.format(Math.abs(v))}`;
-  const price = (v?: number) => typeof v === 'number' && Number.isFinite(v) ? v.toFixed(3) : '—';
-  const lastBuyDate = (item: RecordItem) => [...(item.result.trades ?? [])].reverse().find(trade => trade.side === '买入')?.date ?? '—';
-  const currentCapital = (item: RecordItem) => {
+  const lastBuyDate = (item: SavedRecord) => [...(item.result.trades ?? [])].reverse().find(trade => trade.side === '买入')?.date ?? '—';
+  const currentCapital = (item: SavedRecord) => {
     const trades = item.result.trades ?? [];
     if (!trades.length) return item.row.initialAmount;
     let capital = 0;
@@ -67,62 +46,40 @@ const detailUrl = href('lab/grid-trading/detail');
     }
     return capital;
   };
-  type SortField = 'last-buy' | 'capital' | 'pnl';
+  // 状态排序：已达步长的排在前面，再按离成交/步长的距离由近到远。
+  const statusRank = (item: SavedRecord) => { const status = gridStatus(item); return status ? (status.reached ? 0 : 1) * 10 + Math.abs(status.gap) : 99; };
+  type SortField = 'status' | 'last-buy' | 'capital' | 'pnl';
   let sortField: SortField | null = null;
   let sortOrder: 'asc' | 'desc' = 'desc';
   const sortMark = (field: SortField) => sortField === field ? (sortOrder === 'asc' ? ' ↑' : ' ↓') : '';
   const syncInput = document.querySelector('#sync-key') as HTMLInputElement;
   const syncStatus = document.querySelector('#sync-status') as HTMLElement;
-  const storedSyncKey = localStorage.getItem(syncKeyStorage);
+  const storedSyncKey = localStorage.getItem(SYNC_KEY_STORAGE);
   syncInput.value = storedSyncKey || `${crypto.randomUUID()}${crypto.randomUUID().replaceAll('-', '')}`;
-  if (!storedSyncKey) localStorage.setItem(syncKeyStorage, syncInput.value);
+  if (!storedSyncKey) localStorage.setItem(SYNC_KEY_STORAGE, syncInput.value);
 
-  function read(): RecordItem[] { try { return JSON.parse(localStorage.getItem(key) ?? '[]'); } catch { return []; } }
-  function readDeleted(): Record<string, string> { try { return JSON.parse(localStorage.getItem(deletedKey) ?? '{}'); } catch { return {}; } }
-  function removeRecords(ids: string[]) {
-    const now = new Date().toISOString(), deleted = readDeleted();
-    for (const id of ids) deleted[id] = now;
-    localStorage.setItem(deletedKey, JSON.stringify(deleted));
-    localStorage.setItem(key, JSON.stringify(read().filter(item => !ids.includes(item.id))));
-    render();
-    void syncRecords({ afterDelete: true });
+  function statusCell(item: SavedRecord) {
+    const status = gridStatus(item);
+    if (!status) return '<td class="status-cell">—</td>';
+    return `<td class="status-cell"><span class="status-badge ${status.tone}${status.reached ? ' reached' : ''}">${status.label}</span><span class="status-detail">${status.detail}</span></td>`;
   }
-  const stamp = (item: CloudItem) => new Date(item.updatedAt ?? item.savedAt).valueOf();
-  const isTombstone = (item: CloudItem): item is Tombstone => (item as Tombstone).deleted === true;
 
-  async function syncRecords({ afterDelete = false } = {}) {
-    const token = syncInput.value.trim();
-    if (token.length < 16) { syncStatus.textContent = afterDelete ? '已在本机删除；同步密钥不足 16 位，未同步到云端。' : '同步密钥至少需要 16 位。'; return; }
-    const button = document.querySelector('#sync-records') as HTMLButtonElement;
-    button.disabled = true; syncStatus.textContent = afterDelete ? '正在同步删除到云端…' : '正在同步…';
-    try {
-      const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
-      const response = await fetch(syncEndpoint, { headers });
-      if (!response.ok) throw new Error('读取云端记录失败');
-      const remote = ((await response.json()).records ?? []) as CloudItem[];
-      const tombstones: Tombstone[] = Object.entries(readDeleted()).map(([id, at]) => ({ id, savedAt: at, updatedAt: at, deleted: true }));
-      // 同一 id 以最后修改/删除时间较新的一方为准；删除晚于修改则删除生效，反之保留记录。
-      const merged = new Map<string, CloudItem>();
-      for (const item of [...read(), ...tombstones, ...remote]) {
-        const previous = merged.get(item.id);
-        if (!previous || stamp(item) >= stamp(previous)) merged.set(item.id, item);
+  function sortRecords(records: SavedRecord[]) {
+    if (!sortField) return records;
+    const direction = sortOrder === 'asc' ? 1 : -1;
+    return [...records].sort((a, b) => {
+      if (sortField === 'last-buy') {
+        const aDate = lastBuyDate(a), bDate = lastBuyDate(b);
+        if (aDate === '—' || bDate === '—') return aDate === bDate ? 0 : aDate === '—' ? 1 : -1;
+        return aDate.localeCompare(bDate) * direction;
       }
-      const values = [...merged.values()];
-      const records = values.filter((item): item is RecordItem => !isTombstone(item));
-      // 墓碑保留 180 天，足够让其它设备同步到删除；过期后清理，避免占满云端 200 条上限。
-      const alive = values.filter(isTombstone).filter(item => Date.now() - stamp(item) < tombstoneTtl);
-      const put = await fetch(syncEndpoint, { method: 'PUT', headers, body: JSON.stringify({ records: [...records, ...alive] }) });
-      if (!put.ok) throw new Error('写入云端记录失败');
-      localStorage.setItem(key, JSON.stringify(records));
-      localStorage.setItem(deletedKey, JSON.stringify(Object.fromEntries(alive.map(item => [item.id, item.updatedAt]))));
-      render(); syncStatus.textContent = afterDelete ? `删除已同步到云端，现有 ${records.length} 条记录。` : `同步完成，共 ${records.length} 条记录。`;
-    } catch {
-      syncStatus.textContent = afterDelete ? '已在本机删除，但同步云端失败；稍后点击“同步云端”即可补同步。' : '同步失败，请检查网络和同步密钥。';
-    } finally { button.disabled = false; }
+      if (sortField === 'status') return (statusRank(a) - statusRank(b)) * -direction;
+      return (sortField === 'capital' ? currentCapital(a) - currentCapital(b) : a.result.pnl - b.result.pnl) * direction;
+    });
   }
 
   function render() {
-    const records = read();
+    const records = readRecords();
     if (!records.length) {
       container.innerHTML = `
         <div class="empty">
@@ -141,18 +98,19 @@ const detailUrl = href('lab/grid-trading/detail');
             <tr>
               <th>代码</th>
               <th>名称</th>
-              <th>建仓时间</th>
+              <th><button class="sort-button" data-sort="status" type="button">当前状态${sortMark('status')}</button></th>
+              <th>当前价格</th>
+              <th>预计下次买入</th>
+              <th>预计下次卖出</th>
               <th><button class="sort-button" data-sort="last-buy" type="button">上次买入时间${sortMark('last-buy')}</button></th>
-              <th>初始买入价</th>
-              <th>初始金额</th>
+              <th>上次成交价</th>
               <th>网格步长</th>
               <th>反弹买入</th>
               <th>回落卖出</th>
               <th>每格金额</th>
-              <th>当前价格</th>
-              <th>上次成交价</th>
-              <th>预计下次买入</th>
-              <th>预计下次卖出</th>
+              <th>建仓时间</th>
+              <th>初始买入价</th>
+              <th>初始金额</th>
               <th>买 / 卖次数</th>
               <th><button class="sort-button" data-sort="capital" type="button">当前使用本金${sortMark('capital')}</button></th>
               <th><button class="sort-button" data-sort="pnl" type="button">盈亏金额${sortMark('pnl')}</button></th>
@@ -160,36 +118,26 @@ const detailUrl = href('lab/grid-trading/detail');
             </tr>
           </thead>
           <tbody>
-            ${[...records].sort((a, b) => {
-              if (!sortField) return 0;
-              if (sortField === 'last-buy') {
-                const aDate = lastBuyDate(a), bDate = lastBuyDate(b);
-                if (aDate === '—' && bDate === '—') return 0;
-                if (aDate === '—') return 1;
-                if (bDate === '—') return -1;
-                return sortOrder === 'asc' ? aDate.localeCompare(bDate) : bDate.localeCompare(aDate);
-              }
-              const delta = sortField === 'capital' ? currentCapital(a) - currentCapital(b) : a.result.pnl - b.result.pnl;
-              return sortOrder === 'asc' ? delta : -delta;
-            }).map(item => `
+            ${sortRecords(records).map(item => `
               <tr data-id="${item.id}">
                 <td class="code-cell">${item.row.code}</td>
                 <td class="stock-name">${item.row.name || item.row.code}</td>
-                <td>${item.row.date}</td>
+                ${statusCell(item)}
+                <td class="computed">${formatPrice(item.result.current)}</td>
+                <td class="computed down">${formatPrice(item.result.nextBuy)}</td>
+                <td class="computed up">${formatPrice(item.result.nextSell)}</td>
                 <td>${lastBuyDate(item)}</td>
-                <td>${item.row.initialPrice}</td>
-                <td>¥${formatInt.format(item.row.initialAmount)}</td>
+                <td class="computed">${formatPrice(item.result.lastTrade)}</td>
                 <td>${item.row.step}</td>
                 <td>${item.row.rebound}</td>
                 <td>${item.row.pullback}</td>
                 <td>¥${formatInt.format(item.row.gridAmount)}</td>
-                <td class="computed">${price(item.result.current)}</td>
-                <td class="computed">${price(item.result.lastTrade)}</td>
-                <td class="computed down">${price(item.result.nextBuy)}</td>
-                <td class="computed up">${price(item.result.nextSell)}</td>
+                <td>${item.row.date}</td>
+                <td>${item.row.initialPrice}</td>
+                <td>¥${formatInt.format(item.row.initialAmount)}</td>
                 <td class="computed">${item.result.buys} / ${item.result.sells}</td>
                 <td class="computed">¥${formatInt.format(currentCapital(item))}</td>
-                <td class="computed pnl ${item.result.pnl >= 0 ? 'up' : 'down'}">${money(item.result.pnl)}</td>
+                <td class="computed pnl ${item.result.pnl >= 0 ? 'up' : 'down'}">${formatMoney(item.result.pnl)}</td>
                 <td class="row-actions">
                   <button class="btn-delete" data-id="${item.id}" type="button">删除</button>
                 </td>
@@ -199,6 +147,41 @@ const detailUrl = href('lab/grid-trading/detail');
         </table>
       </div>
     `;
+  }
+
+  // 打开页面先显示已保存快照，再批量刷新行情：所有标的的实时报价合并为一次请求，日线按代码每天只下载一次。
+  async function refreshMarket() {
+    const records = readRecords();
+    if (!records.length) return;
+    marketStatus.textContent = '正在刷新行情…';
+    const updated = await refreshRecords(records);
+    // 刷新期间可能有删除或同步，只回写仍存在的记录。
+    const byId = new Map(updated.map(item => [item.id, item]));
+    writeRecords(readRecords().map(item => byId.get(item.id) ?? item));
+    render();
+    marketStatus.textContent = `行情更新于 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
+  }
+
+  async function syncRecords({ afterDelete = false } = {}) {
+    const token = syncInput.value.trim();
+    if (token.length < 16) { syncStatus.textContent = afterDelete ? '已在本机删除；同步密钥不足 16 位，未同步到云端。' : '同步密钥至少需要 16 位。'; return; }
+    const button = document.querySelector('#sync-records') as HTMLButtonElement;
+    button.disabled = true; syncStatus.textContent = afterDelete ? '正在同步删除到云端…' : '正在同步…';
+    try {
+      const records = await syncAll(token);
+      render();
+      syncStatus.textContent = afterDelete ? `删除已同步到云端，现有 ${records.length} 条记录。` : `同步完成，共 ${records.length} 条记录。`;
+      // 云端带来的新记录可能是其它设备的旧快照，同步后按最新行情重算一次。
+      if (!afterDelete) void refreshMarket();
+    } catch {
+      syncStatus.textContent = afterDelete ? '已在本机删除，但同步云端失败；稍后点击“同步云端”即可补同步。' : '同步失败，请检查网络和同步密钥。';
+    } finally { button.disabled = false; }
+  }
+
+  function remove(ids: string[]) {
+    removeRecords(ids);
+    render();
+    void syncRecords({ afterDelete: true });
   }
 
   container.addEventListener('click', event => {
@@ -214,27 +197,25 @@ const detailUrl = href('lab/grid-trading/detail');
     const button = target.closest('.btn-delete') as HTMLButtonElement | null;
     if (button && button.dataset.id) {
       event.stopPropagation();
-      if (confirm('确认删除该回测记录？删除会同步到云端。')) removeRecords([button.dataset.id]);
+      if (confirm('确认删除该回测记录？删除会同步到云端。')) remove([button.dataset.id]);
       return;
     }
     const tr = target.closest('tbody tr') as HTMLTableRowElement | null;
-    if (tr && tr.dataset.id) {
-      window.location.href = `${detailUrl}?id=${encodeURIComponent(tr.dataset.id)}`;
-    }
+    if (tr && tr.dataset.id) window.location.href = `${detailUrl}?id=${encodeURIComponent(tr.dataset.id)}`;
   });
 
-  syncInput.addEventListener('input', () => localStorage.setItem(syncKeyStorage, syncInput.value.trim()));
+  syncInput.addEventListener('input', () => localStorage.setItem(SYNC_KEY_STORAGE, syncInput.value.trim()));
   document.querySelector('#copy-sync-key')!.addEventListener('click', async () => {
     await navigator.clipboard.writeText(syncInput.value.trim());
     syncStatus.textContent = '同步密钥已复制。';
   });
   document.querySelector('#sync-records')!.addEventListener('click', () => void syncRecords());
-
   document.querySelector('#clear')!.addEventListener('click', () => {
-    if (confirm('确认清空所有已保存的回测？清空会同步到云端。')) removeRecords(read().map(item => item.id));
+    if (confirm('确认清空所有已保存的回测？清空会同步到云端。')) remove(readRecords().map(item => item.id));
   });
 
   render();
+  void refreshMarket();
 </script>
 
 <style>
@@ -243,6 +224,7 @@ const detailUrl = href('lab/grid-trading/detail');
   .btn-back, .btn-clear { border: 1px solid #cbd5e1; border-radius: 7px; padding: 7px 13px; background: #fff; color: #475569; font-size: 13px; font-weight: 500; text-decoration: none; cursor: pointer; transition: all .15s ease; }
   .btn-back:hover { border-color: #94a3b8; color: #0f172a; background: #f8fafc; }
   .btn-clear:hover { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
+  .market-status { margin-left: auto; margin-right: 12px; color: #94a3b8; font-size: 12px; }
   .sync-panel { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; margin:0 0 16px; padding:12px 14px; border:1px solid #bae6fd; border-radius:10px; background:#f0f9ff; color:#475569; font-size:12px; }.sync-panel > div { margin-right:auto; }.sync-panel strong { color:#0369a1; font-size:13px; }.sync-panel p { margin:2px 0 0; }.sync-panel label { display:flex; align-items:center; gap:6px; white-space:nowrap; }.sync-panel input { width:210px; border:1px solid #bae6fd; border-radius:5px; padding:6px 8px; background:#fff; color:#334155; font:12px ui-monospace,monospace; }.sync-panel button { border:1px solid #bae6fd; border-radius:6px; padding:6px 9px; background:#fff; color:#0369a1; font-size:12px; cursor:pointer; }.sync-panel .sync-primary { border-color:#0369a1; background:#0369a1; color:#fff; }.sync-panel button:disabled { opacity:.6; cursor:wait; }.sync-panel #sync-status { color:#64748b; } @media(max-width:700px){.sync-panel > div{width:100%;margin-right:0}.sync-panel label{width:100%}.sync-panel input{flex:1;min-width:0}}
 
   .empty { padding: 48px 24px; border: 1px dashed #cbd5e1; border-radius: 14px; background: #fff; text-align: center; }
@@ -284,6 +266,12 @@ const detailUrl = href('lab/grid-trading/detail');
   .grid-table .down { color: #16a34a !important; font-weight: 700; }
 
   .grid-table .row-actions { min-width: 68px; text-align: center; }
+  .grid-table .status-cell { min-width: 132px; line-height: 1.35; }
+  .grid-table .status-badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #f1f5f9; color: #64748b; }
+  .grid-table .status-badge.buy { background: #f0fdf4; color: #16a34a; }
+  .grid-table .status-badge.sell { background: #fef2f2; color: #dc2626; }
+  .grid-table .status-badge.reached { box-shadow: inset 0 0 0 1px currentColor; }
+  .grid-table .status-detail { display: block; margin-top: 3px; color: #475569; font-weight: 600; }
   .grid-table .sort-button { padding: 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: inherit; cursor: pointer; }
   .grid-table .sort-button:hover { color: #0369a1; }
   .grid-table .btn-delete {
