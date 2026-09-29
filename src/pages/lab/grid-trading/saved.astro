@@ -25,7 +25,8 @@ const detailUrl = href('lab/grid-trading/detail');
 
 <script>
   import {
-    readRecords, writeRecords, refreshRecords, removeRecords, syncAll, gridStatus, formatMoney, formatPrice, SYNC_KEY_STORAGE,
+    readRecords, writeRecords, saveRecord, refreshRecord, refreshRecords, removeRecords, syncAll, pushRecord, withParamChange,
+    gridStatus, formatMoney, formatPrice, tick, SYNC_KEY_STORAGE,
     type SavedRecord,
   } from '../../../lib/grid-trading';
 
@@ -62,6 +63,36 @@ const detailUrl = href('lab/grid-trading/detail');
     const status = gridStatus(item);
     if (!status) return '<td class="status-cell">—</td>';
     return `<td class="status-cell"><span class="status-badge ${status.tone}${status.reached ? ' reached' : ''}">${status.label}</span><span class="status-detail">${status.detail}</span></td>`;
+  }
+
+  // 可编辑的网格参数：价格数值 + 占当前价格的百分比；修改后出现“确认”按钮，确认后只影响之后的下一笔成交。
+  type ParamField = 'step' | 'rebound' | 'pullback';
+  const paramLabels: Record<ParamField, string> = { step: '网格步长', rebound: '反弹买入', pullback: '回落卖出' };
+  const ratioText = (value: number, current: number) => current > 0 ? `${(value / current * 100).toFixed(2)}%` : '';
+  function paramCell(item: SavedRecord, field: ParamField) {
+    const value = item.row[field], current = item.result.current;
+    return `<td class="param-cell"><input class="param-input" type="number" step="0.001" min="0" inputmode="decimal" value="${value}" data-id="${item.id}" data-field="${field}" data-original="${value}" data-current="${current}" aria-label="${item.row.code} ${paramLabels[field]}"><span class="ratio">${ratioText(value, current)}</span><button type="button" class="confirm-param" hidden>确认</button></td>`;
+  }
+  const paramInputOf = (target: EventTarget | null) => (target as HTMLElement).closest('.param-input') as HTMLInputElement | null;
+  const confirmOf = (input: HTMLInputElement) => input.closest('td')!.querySelector('.confirm-param') as HTMLButtonElement;
+  const validParam = (field: ParamField, value: number) => Number.isFinite(value) && (field === 'step' ? value > 0 : value >= 0);
+
+  async function applyParam(id: string, field: ParamField, value: number) {
+    const record = readRecords().find(item => item.id === id);
+    if (!record) return;
+    marketStatus.textContent = '正在按新参数重新计算…';
+    try {
+      // 新参数只对下一笔生效：withParamChange 记录旧参数的截止日，重算时此前的成交保持不变。
+      const updated = await refreshRecord(withParamChange(record, { [field]: value }));
+      saveRecord(updated);
+      render();
+      marketStatus.textContent = '参数已保存，正在同步到云端…';
+      const notice = await pushRecord(updated);
+      marketStatus.textContent = notice || '参数已保存并同步到云端';
+    } catch {
+      marketStatus.textContent = '行情获取失败，参数未保存，请稍后重试';
+      render();
+    }
   }
 
   function sortRecords(records: SavedRecord[]) {
@@ -128,9 +159,9 @@ const detailUrl = href('lab/grid-trading/detail');
                 <td class="computed up">${formatPrice(item.result.nextSell)}</td>
                 <td>${lastBuyDate(item)}</td>
                 <td class="computed">${formatPrice(item.result.lastTrade)}</td>
-                <td>${item.row.step}</td>
-                <td>${item.row.rebound}</td>
-                <td>${item.row.pullback}</td>
+                ${paramCell(item, 'step')}
+                ${paramCell(item, 'rebound')}
+                ${paramCell(item, 'pullback')}
                 <td>¥${formatInt.format(item.row.gridAmount)}</td>
                 <td>${item.row.date}</td>
                 <td>${item.row.initialPrice}</td>
@@ -155,10 +186,11 @@ const detailUrl = href('lab/grid-trading/detail');
     if (!records.length) return;
     marketStatus.textContent = '正在刷新行情…';
     const updated = await refreshRecords(records);
-    // 刷新期间可能有删除或同步，只回写仍存在的记录。
+    // 刷新期间可能有删除、同步或参数修改：只回写仍存在且未被改动（updatedAt 一致）的记录，避免用旧结果覆盖新修改。
     const byId = new Map(updated.map(item => [item.id, item]));
-    writeRecords(readRecords().map(item => byId.get(item.id) ?? item));
-    render();
+    writeRecords(readRecords().map(item => { const fresh = byId.get(item.id); return fresh && fresh.updatedAt === item.updatedAt ? fresh : item; }));
+    // 正在输入参数时不重绘，避免丢失未确认的输入。
+    if (!container.querySelector('.param-input.dirty')) render();
     marketStatus.textContent = `行情更新于 ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
   }
 
@@ -184,8 +216,40 @@ const detailUrl = href('lab/grid-trading/detail');
     void syncRecords({ afterDelete: true });
   }
 
+  container.addEventListener('input', event => {
+    const input = paramInputOf(event.target);
+    if (!input) return;
+    const field = input.dataset.field as ParamField, value = Number(input.value);
+    const changed = validParam(field, value) && tick(value) !== tick(Number(input.dataset.original));
+    input.classList.toggle('dirty', changed);
+    confirmOf(input).hidden = !changed;
+    (input.nextElementSibling as HTMLElement).textContent = Number.isFinite(value) ? ratioText(value, Number(input.dataset.current)) : '';
+  });
+  container.addEventListener('keydown', event => {
+    const input = paramInputOf(event.target);
+    if (!input) return;
+    const button = confirmOf(input), key = (event as KeyboardEvent).key;
+    if (key === 'Enter' && !button.hidden) button.click();
+    if (key === 'Escape') {
+      input.value = input.dataset.original!; input.classList.remove('dirty'); button.hidden = true;
+      (input.nextElementSibling as HTMLElement).textContent = ratioText(Number(input.dataset.original), Number(input.dataset.current));
+      input.blur();
+    }
+  });
+
   container.addEventListener('click', event => {
     const target = event.target as HTMLElement;
+    // 参数输入框和确认按钮不触发整行跳转。
+    if (target.closest('.param-cell')) {
+      const button = target.closest('.confirm-param') as HTMLButtonElement | null;
+      if (!button) return;
+      const input = button.closest('td')!.querySelector('.param-input') as HTMLInputElement;
+      const field = input.dataset.field as ParamField, value = Number(input.value);
+      if (!validParam(field, value)) return;
+      button.disabled = true; button.textContent = '计算中…';
+      void applyParam(input.dataset.id!, field, tick(value));
+      return;
+    }
     const sortButton = target.closest('[data-sort]') as HTMLButtonElement | null;
     if (sortButton?.dataset.sort) {
       const field = sortButton.dataset.sort as SortField;
@@ -266,6 +330,17 @@ const detailUrl = href('lab/grid-trading/detail');
   .grid-table .down { color: #16a34a !important; font-weight: 700; }
 
   .grid-table .row-actions { min-width: 68px; text-align: center; }
+  .grid-table .param-cell { min-width: 96px; line-height: 1.35; }
+  .grid-table .ratio { display: block; margin-top: 2px; color: #94a3b8; font-size: 11px; }
+  .grid-table .param-input { width: 72px; padding: 3px 6px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: inherit; font: inherit; font-variant-numeric: tabular-nums; text-align: center; cursor: text; -moz-appearance: textfield; }
+  .grid-table .param-input::-webkit-inner-spin-button, .grid-table .param-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  .grid-table .param-input:hover { border-color: #cbd5e1; background: #fff; }
+  .grid-table .param-input:focus { outline: none; border-color: #0369a1; background: #fff; box-shadow: 0 0 0 2px rgb(3 105 161 / .15); }
+  .grid-table .param-input.dirty { border-color: #fcd34d; background: #fffbeb; color: #b45309; font-weight: 600; }
+  .grid-table .confirm-param { margin-top: 3px; border: 1px solid #0369a1; border-radius: 4px; padding: 1px 10px; background: #0369a1; color: #fff; font-size: 11px; line-height: 16px; cursor: pointer; }
+  .grid-table .confirm-param:hover { background: #075985; }
+  .grid-table .confirm-param:disabled { opacity: .6; cursor: wait; }
+  .grid-table .confirm-param[hidden] { display: none; }
   .grid-table .status-cell { min-width: 132px; line-height: 1.35; }
   .grid-table .status-badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #f1f5f9; color: #64748b; }
   .grid-table .status-badge.buy { background: #f0fdf4; color: #16a34a; }

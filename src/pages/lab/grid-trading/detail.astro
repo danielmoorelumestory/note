@@ -23,7 +23,7 @@ const savedUrl = href('lab/grid-trading/saved');
     type SavedRecord, type Trade, type Adjustments,
   } from '../../../lib/grid-trading';
 
-  type AdjustField = keyof Adjustments;
+  type AdjustField = 'price' | 'amount' | 'shares';
   const id = new URLSearchParams(location.search).get('id');
   const subtitle = document.querySelector('#subtitle') as HTMLElement;
   const price = (v?: number) => typeof v === 'number' && Number.isFinite(v) ? `¥${v.toFixed(3)}` : '—';
@@ -38,15 +38,13 @@ const savedUrl = href('lab/grid-trading/saved');
     const { row, result } = item;
     document.querySelector('#title')!.textContent = `${row.name} · ${row.code}`;
     subtitle.textContent = `${result.range} · 初始价 ${row.initialPrice} · 每格金额 ¥${row.gridAmount.toLocaleString('zh-CN')}`;
-    // 先跌至/涨至一个步长（触发价），之后反弹/回落设定数值才成交；已达步长时按期间最低/最高点计算成交价。
-    const base = result.lastTrade ?? row.initialPrice, current = result.current;
-    const buyTrigger = result.buyTrigger ?? base - row.step, sellTrigger = result.sellTrigger ?? base + row.step;
-    const buyReached = typeof result.lowSince === 'number', sellReached = typeof result.highSince === 'number';
-    // 第一行：目标价及与现价的差距；已达步长时目标价为反弹/回落后的成交价。第二行：反弹/回落金额占现价比例。
+    // 预计买卖价是固定成交价，日内高低价触及即执行。
+    const current = result.current;
+    const buyReached = current <= result.nextBuy, sellReached = current >= result.nextSell;
     const gap = (target: number) => `距现价 ${formatPercent((target - current) / current)}`;
     const moveLine = (label: string, value: number) => `${label} ¥${value.toFixed(3)} · 占现价 ${(value / current * 100).toFixed(2)}%`;
-    const buyHint = [buyReached ? `已达步长，反弹至 ¥${result.nextBuy.toFixed(3)} · ${gap(result.nextBuy)}` : `跌至 ¥${buyTrigger.toFixed(3)} · ${gap(buyTrigger)}`, moveLine('反弹', row.rebound)];
-    const sellHint = [sellReached ? `已达步长，回落至 ¥${result.nextSell.toFixed(3)} · ${gap(result.nextSell)}` : `涨至 ¥${sellTrigger.toFixed(3)} · ${gap(sellTrigger)}`, moveLine('回落', row.pullback)];
+    const buyHint = [buyReached ? `已达到买入价 ¥${result.nextBuy.toFixed(3)}` : `价格达到 ¥${result.nextBuy.toFixed(3)} 即买入 · ${gap(result.nextBuy)}`, moveLine('反弹', row.rebound)];
+    const sellHint = [sellReached ? `已达到卖出价 ¥${result.nextSell.toFixed(3)}` : `价格达到 ¥${result.nextSell.toFixed(3)} 即卖出 · ${gap(result.nextSell)}`, moveLine('回落', row.pullback)];
     const hint = (lines: string[]) => lines.map(line => `<span class="step-hint">${line}</span>`).join('');
     document.querySelector('#stats')!.innerHTML = `
       <div><span>当前价格</span><strong>${price(current)}</strong></div>
@@ -87,7 +85,7 @@ const savedUrl = href('lab/grid-trading/saved');
   async function applyAdjustment(field: AdjustField, date: string, value: number) {
     if (!record) return;
     const current = adjustmentsOf(record);
-    const next: Adjustments = { price: { ...current.price }, amount: { ...current.amount }, shares: { ...current.shares } };
+    const next: Adjustments = { ...current, price: { ...current.price }, amount: { ...current.amount }, shares: { ...current.shares } };
     // 金额与份额互相决定，同一笔只保留最后修改的那一项。
     if (field !== 'price') { delete next.amount![date]; delete next.shares![date]; }
     else delete next.price![date];

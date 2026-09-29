@@ -19,10 +19,13 @@ export type GridResult = {
 };
 // 按成交日期记录手动修正的真实成交价/成交金额/成交份额；每个交易日最多一笔成交，建仓日即 row.date。
 export type Overrides = Record<string, number>;
-export type Adjustments = { price?: Overrides; amount?: Overrides; shares?: Overrides };
+// 参数变更历史：截止 until（含）的交易日使用该段记录的旧参数，之后的交易日使用记录当前的参数。
+// 这样修改步长/反弹/回落只影响之后的下一笔成交，不会改动此前已成交的记录。
+export type ParamStage = { until: string; step: number; rebound: number; pullback: number };
+export type Adjustments = { price?: Overrides; amount?: Overrides; shares?: Overrides; params?: ParamStage[] };
 export type SavedRecord = {
   id: string; savedAt: string; updatedAt?: string;
-  priceOverrides?: Overrides; amountOverrides?: Overrides; sharesOverrides?: Overrides;
+  priceOverrides?: Overrides; amountOverrides?: Overrides; sharesOverrides?: Overrides; paramHistory?: ParamStage[];
   row: GridParams & { id?: number };
   // 旧版本保存的结果可能缺少部分字段，读取时需做兼容。
   result: GridResult;
@@ -161,11 +164,31 @@ export function mergeQuote(candles: Candle[], quote?: Quote): Candle[] {
 
 // ---------- 网格计算 ----------
 
-export const adjustmentsOf = (record: SavedRecord): Adjustments => ({ price: record.priceOverrides, amount: record.amountOverrides, shares: record.sharesOverrides });
+export const adjustmentsOf = (record: SavedRecord): Adjustments => ({ price: record.priceOverrides, amount: record.amountOverrides, shares: record.sharesOverrides, params: record.paramHistory });
 
 /**
- * 按日线模拟网格：先跌破/突破上次成交价一个步长（正好达到也算），记录此后的最低/最高点，
- * 再反弹/回落设定数值成交。达到步长的当天，以收盘价（盘中为实时价）是否已反弹/回落到位确认同日成交。
+ * 修改步长/反弹/回落。
+ * - 还没有任何网格买卖成交（只有建仓）：等同于修改这条记录的初始设置，整段历史按新参数重算，不保留旧参数。
+ * - 已有网格成交：把改动前的参数记为一段截止到 until 的历史，新参数只对 until 之后的交易日生效。
+ *   until 取上次成交日与昨天中较晚者——建仓及此前的成交不变，改动前已经过去的交易日也不会被新参数重新触发，
+ *   当天已经发生的成交同样不受影响。同一天多次修改共用同一段历史（保留最初的旧参数）。
+ */
+export function withParamChange(record: SavedRecord, patch: Partial<Pick<GridParams, 'step' | 'rebound' | 'pullback'>>): SavedRecord {
+  const { step, rebound, pullback } = record.row;
+  const hasGridTrades = (record.result.trades ?? []).some(trade => trade.side !== '建仓');
+  if (!hasGridTrades) return { ...record, row: { ...record.row, ...patch }, paramHistory: undefined, updatedAt: new Date().toISOString() };
+  const lastTradeDate = record.result.lastTradeDate ?? record.result.trades?.at(-1)?.date ?? record.row.date;
+  const yesterday = new Date(`${marketToday()}T00:00:00Z`); yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  const until = [lastTradeDate, yesterday.toISOString().slice(0, 10)].sort().at(-1)!;
+  const history = record.paramHistory ?? [];
+  const paramHistory = history.some(stage => stage.until === until) ? history
+    : [...history, { until, step, rebound, pullback }].sort((a, b) => a.until.localeCompare(b.until));
+  return { ...record, row: { ...record.row, ...patch }, paramHistory, updatedAt: new Date().toISOString() };
+}
+
+/**
+ * 按日线模拟网格：反弹买入、回落卖出直接计入固定的下一格成交价。
+ * 日内最低价触及买入价、或日内最高价触及卖出价，即按该价格成交；不要求先跌破/突破步长线后再反转。
  * 有手动修正时按真实成交价/金额/份额成交，成交价同时作为后续网格基准；model* 记录原计算值。
  */
 export function calculateGrid(row: GridParams, candles: Candle[], adjustments: Adjustments = {}): GridResult {
@@ -188,11 +211,13 @@ export function calculateGrid(row: GridParams, candles: Candle[], adjustments: A
   const opening = fillPrice(row.date, row.initialPrice), openingFill = fillAmount(row.date, row.initialAmount, opening.price), openingAmount = openingFill.amount;
   let cash = -openingAmount * FEE_RATE, shares = openingFill.quantity, cost = openingAmount * (1 + FEE_RATE), capitalUsed = openingAmount, maxCapital = capitalUsed;
   let lastTrade = opening.price, lastTradeDate = row.date, realized = 0, buys = 0, sells = 0;
-  let lowSince: number | null = null, highSince: number | null = null;
   // 接口在非交易日会从下一交易日开始返回；该首个实际交易日视为建仓日，建仓当笔总盈亏按其收盘价结算。
   const openingCandle = candles.find(candle => candle.date >= row.date), openingDay = openingCandle?.date;
   const trades: Trade[] = [{ date: row.date, side: '建仓', ...opening, ...openingFill, shares, capitalUsed, pnl: cash + shares * (openingCandle?.close ?? opening.price) - openingAmount }];
   const series: EquityPoint[] = [];
+  // 当日适用的参数：取第一个截止日不早于当日的历史段，否则用当前参数。
+  const stages = adjustments.params ?? [];
+  const paramsAt = (date: string) => stages.find(stage => date <= stage.until) ?? row;
   const buy = (date: string, modelPrice: number) => {
     const fill = fillPrice(date, modelPrice), tradePrice = fill.price;
     const amountFill = fillAmount(date, row.gridAmount, tradePrice), amount = amountFill.amount, fee = amount * FEE_RATE;
@@ -217,28 +242,20 @@ export function calculateGrid(row: GridParams, candles: Candle[], adjustments: A
   for (const candle of candles) {
     // 建仓日只按建仓价建立初始仓位，不读取当日高低价，也不触发网格。
     if (candle.date !== openingDay) {
-      // 1) 此前已达步长：当日最高/最低价触及反弹/回落价即成交。
-      let traded = lowSince !== null && candle.high >= tick(lowSince + row.rebound) ? buy(candle.date, tick(lowSince + row.rebound))
-        : highSince !== null && candle.low <= tick(highSince - row.pullback) ? sell(candle.date, tick(highSince - row.pullback)) : false;
-      if (!traded) {
-        if (candle.low <= tick(lastTrade - row.step)) lowSince = Math.min(lowSince ?? candle.low, candle.low);
-        if (candle.high >= tick(lastTrade + row.step)) highSince = Math.max(highSince ?? candle.high, candle.high);
-        // 2) 当日才达到步长：日线分不清最高/最低价先后，但收盘价（盘中为实时价）一定晚于当日最低/最高点，
-        //    收盘价已反弹/回落到位即说明反转发生在极值之后，同日确认成交。
-        traded = lowSince !== null && candle.close >= tick(lowSince + row.rebound) ? buy(candle.date, tick(lowSince + row.rebound))
-          : highSince !== null && candle.close <= tick(highSince - row.pullback) ? sell(candle.date, tick(highSince - row.pullback)) : false;
-      }
-      if (traded) { lowSince = null; highSince = null; }
+      const params = paramsAt(candle.date);
+      const buyPrice = tick(lastTrade - params.step + params.rebound);
+      const sellPrice = tick(lastTrade + params.step - params.pullback);
+      // 一根日线不能得知先后顺序；同日两侧均触及时沿用买入优先、每日最多一笔的保守约定。
+      if (candle.low <= buyPrice) buy(candle.date, buyPrice);
+      else if (candle.high >= sellPrice) sell(candle.date, sellPrice);
     }
     series.push({ date: candle.date, current: candle.close, positionValue: shares * candle.close, capitalUsed, pnl: cash + shares * candle.close - openingAmount });
   }
   const current = candles.at(-1)?.close ?? opening.price, value = cash + shares * current;
-  const buyTrigger = tick(lastTrade - row.step), sellTrigger = tick(lastTrade + row.step);
-  // 已达步长时按期间最低/最高点计算成交价，否则按触发价加反弹/减回落。
-  const nextBuy = tick((lowSince ?? buyTrigger) + row.rebound), nextSell = tick((highSince ?? sellTrigger) - row.pullback);
+  const nextBuy = tick(lastTrade - row.step + row.rebound), nextSell = tick(lastTrade + row.step - row.pullback);
   return {
     range: candles.length ? `${candles[0].date} ～ ${candles.at(-1)!.date}` : row.date,
-    current, lastTradeDate, lastTrade, nextBuy, nextSell, buyTrigger, sellTrigger, lowSince: lowSince ?? undefined, highSince: highSince ?? undefined,
+    current, lastTradeDate, lastTrade, nextBuy, nextSell, buyTrigger: nextBuy, sellTrigger: nextSell,
     pnl: value - openingAmount, value, realized, maxCapital, buys, sells, trades, series,
   };
 }
@@ -248,30 +265,16 @@ export function calculateGrid(row: GridParams, candles: Candle[], adjustments: A
 export type GridStatus = { tone: 'buy' | 'sell' | 'idle'; reached: boolean; label: string; detail: string; gap: number };
 
 /**
- * 当前状态：未达步长时显示现价离买入/卖出步长价哪边更近及差距；
- * 已达步长时显示还需反弹/回落多少才能成交（两边都达到时取更接近成交的一边）。
+ * 当前状态：显示现价离固定下一笔买入/卖出价较近的一侧及差距。
  */
 export function gridStatus(record: SavedRecord): GridStatus | null {
   const { result, row } = record, current = result.current;
   if (!(current > 0)) return null;
-  const base = result.lastTrade ?? row.initialPrice;
-  const buyTrigger = result.buyTrigger ?? tick(base - row.step), sellTrigger = result.sellTrigger ?? tick(base + row.step);
-  const candidates: GridStatus[] = [];
-  if (typeof result.lowSince === 'number') {
-    const gap = (result.nextBuy - current) / current;
-    candidates.push({ tone: 'buy', reached: true, label: '已达买入步长', detail: `需反弹 ${formatPercent(gap)}`, gap });
-  }
-  if (typeof result.highSince === 'number') {
-    const gap = (result.nextSell - current) / current;
-    candidates.push({ tone: 'sell', reached: true, label: '已达卖出步长', detail: `需回落 ${formatPercent(gap)}`, gap });
-  }
-  if (!candidates.length) {
-    const buyGap = (buyTrigger - current) / current, sellGap = (sellTrigger - current) / current;
-    candidates.push(
-      { tone: 'buy', reached: false, label: '距买入步长', detail: formatPercent(buyGap), gap: buyGap },
-      { tone: 'sell', reached: false, label: '距卖出步长', detail: formatPercent(sellGap), gap: sellGap },
-    );
-  }
+  const buyGap = (result.nextBuy - current) / current, sellGap = (result.nextSell - current) / current;
+  const candidates: GridStatus[] = [
+    { tone: 'buy', reached: current <= result.nextBuy, label: current <= result.nextBuy ? '已达买入价' : '距买入价', detail: formatPercent(buyGap), gap: buyGap },
+    { tone: 'sell', reached: current >= result.nextSell, label: current >= result.nextSell ? '已达卖出价' : '距卖出价', detail: formatPercent(sellGap), gap: sellGap },
+  ];
   return candidates.sort((a, b) => Math.abs(a.gap) - Math.abs(b.gap))[0];
 }
 
