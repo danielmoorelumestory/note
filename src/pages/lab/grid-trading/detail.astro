@@ -75,8 +75,8 @@ const savedUrl = href('lab/grid-trading/saved');
     const pct = (value: number) => `${value >= 0 ? '+' : ''}${(value * 100).toFixed(2)}%`;
     const gap = (target: number) => `距现价 ${pct((target - current) / current)}`;
     const moveLine = (label: string, value: number) => `${label} ¥${value.toFixed(3)} · 占现价 ${(value / current * 100).toFixed(2)}%`;
-    const buyHint = [buyStepReached ? `已跌破，反弹至 ¥${record.result.nextBuy!.toFixed(3)} · ${gap(record.result.nextBuy!)}` : `跌破 ¥${buyTrigger.toFixed(3)} · ${gap(buyTrigger)}`, moveLine('反弹', record.row.rebound)];
-    const sellHint = [sellStepReached ? `已突破，回落至 ¥${record.result.nextSell!.toFixed(3)} · ${gap(record.result.nextSell!)}` : `突破 ¥${sellTrigger.toFixed(3)} · ${gap(sellTrigger)}`, moveLine('回落', record.row.pullback)];
+    const buyHint = [buyStepReached ? `已达步长，反弹至 ¥${record.result.nextBuy!.toFixed(3)} · ${gap(record.result.nextBuy!)}` : `跌至 ¥${buyTrigger.toFixed(3)} · ${gap(buyTrigger)}`, moveLine('反弹', record.row.rebound)];
+    const sellHint = [sellStepReached ? `已达步长，回落至 ¥${record.result.nextSell!.toFixed(3)} · ${gap(record.result.nextSell!)}` : `涨至 ¥${sellTrigger.toFixed(3)} · ${gap(sellTrigger)}`, moveLine('回落', record.row.pullback)];
 
     document.querySelector('#stats')!.innerHTML = `
       <div><span>当前价格</span><strong>${price(record.result.current)}</strong></div>
@@ -226,7 +226,7 @@ const savedUrl = href('lab/grid-trading/saved');
     if (saved.refreshedOn === today && cached?.candles?.length) {
       // 用本页会话标记避免刷新后循环重载；新开页面仍会重新取得当日高低价。
       // 版本号变更时重算已保存记录，避免浏览器会话沿用旧的计算逻辑。
-      const refreshMark = `grid-trading-realtime-refresh-v5:${saved.id}:${today}`;
+      const refreshMark = `grid-trading-realtime-refresh-v6:${saved.id}:${today}`;
       if (!sessionStorage.getItem(refreshMark)) {
         sessionStorage.setItem(refreshMark, '1');
         await refreshRealtimeSnapshot(saved, today);
@@ -307,6 +307,9 @@ const savedUrl = href('lab/grid-trading/saved');
     } catch { return candles; }
   }
 
+  // 价格按 0.001 最小变动单位取整，避免 3.88 - 0.1 = 3.7800000000000002 这类浮点误差导致正好触及的价格被漏判。
+  const tick = (value: number) => Math.round(value * 1000) / 1000;
+
   function calculateFromCandles(row: RecordItem['row'], candles: Candle[], adjustments: Adjustments = {}): RecordItem['result'] {
     const feeRate = .00015, taxRate = /^(5\d{5}|1[5-8]\d{4})$/.test(row.code) ? 0 : .0005;
     // 有修正值时按真实成交价/成交金额成交，成交价同时作为后续网格的基准价；model* 记录原计算值，用于标记已修正的单元格。
@@ -337,13 +340,13 @@ const savedUrl = href('lab/grid-trading/saved');
         // 先跌破/突破上次成交价一个步长，记录此后的最低/最高点，再反弹/回落设定数值才成交。
         // 日线无法区分同日高低价先后，达到步长的当天不确认反转，从之后的交易日开始判断。
         let traded = false;
-        if (lowSince !== null && candle.high >= lowSince + row.rebound) {
-          const buyPrice = lowSince + row.rebound; traded = true;
+        if (lowSince !== null && candle.high >= tick(lowSince + row.rebound)) {
+          const buyPrice = tick(lowSince + row.rebound); traded = true;
           const fill = fillPrice(candle.date, buyPrice), tradePrice = fill.price, amountFill = fillAmount(candle.date, row.gridAmount, tradePrice), amount = amountFill.amount, quantity = amountFill.quantity, fee = amount * feeRate;
           shares += quantity; cost += amount + fee; cash -= amount + fee; capitalUsed += amount; maxCapital = Math.max(maxCapital, capitalUsed); lastTrade = tradePrice; lastTradeDate = candle.date; buys++;
           trades.push({ date: candle.date, side: '买入', ...fill, ...amountFill, shares, capitalUsed, pnl: cash + shares * tradePrice - openingAmount });
-        } else if (highSince !== null && candle.low <= highSince - row.pullback) {
-          const sellPrice = highSince - row.pullback; traded = true;
+        } else if (highSince !== null && candle.low <= tick(highSince - row.pullback)) {
+          const sellPrice = tick(highSince - row.pullback); traded = true;
           const fill = fillPrice(candle.date, sellPrice), tradePrice = fill.price, modelProceeds = Math.min(shares, row.gridAmount / tradePrice) * tradePrice;
           // 修正后的卖出份额不能超过当前全部持仓。
           const amountFill = fillAmount(candle.date, modelProceeds, tradePrice), quantity = Math.min(shares, amountFill.quantity);
@@ -351,15 +354,16 @@ const savedUrl = href('lab/grid-trading/saved');
         }
         if (traded) { lowSince = null; highSince = null; }
         else {
-          if (candle.low <= lastTrade - row.step) lowSince = Math.min(lowSince ?? candle.low, candle.low);
-          if (candle.high >= lastTrade + row.step) highSince = Math.max(highSince ?? candle.high, candle.high);
+          // 触及步长价（含正好达到）即算达到步长。
+          if (candle.low <= tick(lastTrade - row.step)) lowSince = Math.min(lowSince ?? candle.low, candle.low);
+          if (candle.high >= tick(lastTrade + row.step)) highSince = Math.max(highSince ?? candle.high, candle.high);
         }
       }
       series.push({ date: candle.date, current: candle.close, positionValue: shares * candle.close, capitalUsed, pnl: cash + shares * candle.close - openingAmount });
     }
     const current = candles.at(-1)!.close, value = cash + shares * current;
-    const buyTrigger = lastTrade - row.step, sellTrigger = lastTrade + row.step;
-    const nextBuy = (lowSince ?? buyTrigger) + row.rebound, nextSell = (highSince ?? sellTrigger) - row.pullback;
+    const buyTrigger = tick(lastTrade - row.step), sellTrigger = tick(lastTrade + row.step);
+    const nextBuy = tick((lowSince ?? buyTrigger) + row.rebound), nextSell = tick((highSince ?? sellTrigger) - row.pullback);
     return { range: `${candles[0].date} ～ ${candles.at(-1)!.date}`, current, lastTradeDate, lastTrade, nextBuy, nextSell, buyTrigger, sellTrigger, lowSince: lowSince ?? undefined, highSince: highSince ?? undefined, pnl: value - openingAmount, value, maxCapital, buys, sells, trades, series };
   }
 
