@@ -3,6 +3,8 @@
 
 export type Candle = { date: string; close: number; high: number; low: number };
 export type Trade = {
+  // manual/id：手动添加的成交记录（详情页“添加记录”），其余为网格模拟成交。
+  manual?: boolean; id?: string;
   date: string; side: string; price: number; amount: number; shares: number; capitalUsed?: number; pnl: number;
   quantity?: number; modelPrice?: number; modelAmount?: number; modelQuantity?: number;
 };
@@ -16,16 +18,23 @@ export type GridResult = {
   nextBuy: number; nextSell: number; buyTrigger: number; sellTrigger: number; lowSince?: number; highSince?: number;
   pnl: number; value: number; realized: number; maxCapital: number; buys: number; sells: number;
   trades: Trade[]; series: EquityPoint[];
+  // 当前持仓份额（含手动增删）。
+  position?: number;
 };
 // 按成交日期记录手动修正的真实成交价/成交金额/成交份额；每个交易日最多一笔成交，建仓日即 row.date。
 export type Overrides = Record<string, number>;
 // 参数变更历史：截止 until（含）的交易日使用该段记录的旧参数，之后的交易日使用记录当前的参数。
 // 这样修改步长/反弹/回落只影响之后的下一笔成交，不会改动此前已成交的记录。
 export type ParamStage = { until: string; step: number; rebound: number; pullback: number };
-export type Adjustments = { price?: Overrides; amount?: Overrides; shares?: Overrides; params?: ParamStage[] };
+// 手动记录：真实发生但网格模拟没有的成交。金额、持仓、占用本金、盈亏由系统按价格和份额自动计算。
+export type ManualTrade = { id: string; date: string; side: '买入' | '卖出'; price: number; shares: number };
+// manual：手动添加的成交；removed：被删除的网格成交（按成交日期，建仓不可删除）。
+// 手动增删只叠加到总盈亏、持仓和占用本金上，不改动已有成交行的数据。
+export type Adjustments = { price?: Overrides; amount?: Overrides; shares?: Overrides; params?: ParamStage[]; manual?: ManualTrade[]; removed?: string[] };
 export type SavedRecord = {
   id: string; savedAt: string; updatedAt?: string;
   priceOverrides?: Overrides; amountOverrides?: Overrides; sharesOverrides?: Overrides; paramHistory?: ParamStage[];
+  manualTrades?: ManualTrade[]; removedTrades?: string[];
   row: GridParams & { id?: number };
   // 旧版本保存的结果可能缺少部分字段，读取时需做兼容。
   result: GridResult;
@@ -164,7 +173,7 @@ export function mergeQuote(candles: Candle[], quote?: Quote): Candle[] {
 
 // ---------- 网格计算 ----------
 
-export const adjustmentsOf = (record: SavedRecord): Adjustments => ({ price: record.priceOverrides, amount: record.amountOverrides, shares: record.sharesOverrides, params: record.paramHistory });
+export const adjustmentsOf = (record: SavedRecord): Adjustments => ({ price: record.priceOverrides, amount: record.amountOverrides, shares: record.sharesOverrides, params: record.paramHistory, manual: record.manualTrades, removed: record.removedTrades });
 
 /**
  * 修改步长/反弹/回落。
@@ -175,7 +184,7 @@ export const adjustmentsOf = (record: SavedRecord): Adjustments => ({ price: rec
  */
 export function withParamChange(record: SavedRecord, patch: Partial<Pick<GridParams, 'step' | 'rebound' | 'pullback'>>): SavedRecord {
   const { step, rebound, pullback } = record.row;
-  const hasGridTrades = (record.result.trades ?? []).some(trade => trade.side !== '建仓');
+  const hasGridTrades = (record.result.trades ?? []).some(trade => trade.side !== '建仓' && !trade.manual);
   if (!hasGridTrades) return { ...record, row: { ...record.row, ...patch }, paramHistory: undefined, updatedAt: new Date().toISOString() };
   const lastTradeDate = record.result.lastTradeDate ?? record.result.trades?.at(-1)?.date ?? record.row.date;
   const yesterday = new Date(`${marketToday()}T00:00:00Z`); yesterday.setUTCDate(yesterday.getUTCDate() - 1);
@@ -191,7 +200,7 @@ export function withParamChange(record: SavedRecord, patch: Partial<Pick<GridPar
  * 日内最低价触及买入价、或日内最高价触及卖出价，即按该价格成交；不要求先跌破/突破步长线后再反转。
  * 有手动修正时按真实成交价/金额/份额成交，成交价同时作为后续网格基准；model* 记录原计算值。
  */
-export function calculateGrid(row: GridParams, candles: Candle[], adjustments: Adjustments = {}): GridResult {
+function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustments): GridResult {
   const taxRate = isEtf(row.code) ? 0 : STOCK_SELL_TAX_RATE;
   const pick = (map: Overrides | undefined, date: string) => {
     const value = map?.[date];
@@ -256,7 +265,101 @@ export function calculateGrid(row: GridParams, candles: Candle[], adjustments: A
   return {
     range: candles.length ? `${candles[0].date} ～ ${candles.at(-1)!.date}` : row.date,
     current, lastTradeDate, lastTrade, nextBuy, nextSell, buyTrigger: nextBuy, sellTrigger: nextSell,
-    pnl: value - openingAmount, value, realized, maxCapital, buys, sells, trades, series,
+    pnl: value - openingAmount, value, realized, maxCapital, buys, sells, trades, series, position: shares,
+  };
+}
+
+/**
+ * 当前持仓市值 = 持仓份额 × 当前价。注意 result.value 是“现金流累计 + 持仓市值”的总资产净值，不能当作持仓市值；
+ * 早期保存的记录没有 position，用资金曲线最后一天的持仓市值（同样是份额 × 收盘价）兜底。
+ */
+export const holdingValue = (result: GridResult) =>
+  typeof result.position === 'number' ? result.position * result.current : (result.series?.at(-1)?.positionValue ?? 0);
+
+/** 建仓的实际价格与金额：详情页修正过建仓成交后以修正值为准，否则为创建时填写的设置值。 */
+export function openingOf(record: SavedRecord): { price: number; amount: number } {
+  const opening = record.result.trades?.find(trade => trade.side === '建仓');
+  return { price: opening?.price ?? record.row.initialPrice, amount: opening?.amount ?? record.row.initialAmount };
+}
+
+/** 网格模拟 + 手动增删叠加。 */
+export function calculateGrid(row: GridParams, candles: Candle[], adjustments: Adjustments = {}): GridResult {
+  return applyLedger(row, simulateGrid(row, candles, adjustments), adjustments);
+}
+
+/**
+ * 叠加手动增删的成交：
+ * - 只影响总盈亏、持仓、占用本金、最多使用本金与资金曲线；已有成交行（价格、份额、持仓、盈亏）保持模拟结果不变。
+ * - 手动记录自身的成交后持仓、占用本金、当时盈亏，按“模拟结果在该日的状态 + 此前所有增删的累计影响”自动算出。
+ * - 只有位于列表最上面（最新）的一条决定下一格买卖价的基准：新增了更新的记录，或删掉了最新的成交，才改变上次成交价。
+ */
+function applyLedger(row: GridParams, base: GridResult, adjustments: Adjustments): GridResult {
+  const manual = adjustments.manual ?? [], removed = new Set(adjustments.removed ?? []);
+  const gridRemoved = base.trades.filter((trade, index) => index > 0 && !trade.manual && removed.has(trade.date));
+  if (!manual.length && !gridRemoved.length) return base;
+  const taxRate = isEtf(row.code) ? 0 : STOCK_SELL_TAX_RATE;
+  const openingAmount = base.trades[0].amount;
+  // 一笔成交对现金、持仓、占用本金的影响；sign = -1 表示撤销这笔成交。
+  const effect = (side: string, amount: number, quantity: number, sign: 1 | -1) => {
+    const buy = side === '买入';
+    return {
+      ds: (buy ? quantity : -quantity) * sign,
+      dcash: (buy ? -amount * (1 + FEE_RATE) : amount * (1 - FEE_RATE - taxRate)) * sign,
+      dcap: (buy ? amount : -amount) * sign,
+      dbuys: (buy ? 1 : 0) * sign, dsells: (buy ? 0 : 1) * sign,
+    };
+  };
+  type Change = ReturnType<typeof effect> & { date: string; order: number; seq: number; manual?: ManualTrade };
+  const changes: Change[] = [];
+  gridRemoved.forEach(trade => changes.push({ ...effect(trade.side, trade.amount, trade.quantity ?? trade.amount / trade.price, -1), date: trade.date, order: 0, seq: changes.length }));
+  manual.forEach(item => changes.push({ ...effect(item.side, item.price * item.shares, item.shares, 1), date: item.date, order: 1, seq: changes.length, manual: item }));
+  changes.sort((a, b) => a.date.localeCompare(b.date) || a.order - b.order || a.seq - b.seq);
+
+  // 模拟结果在某日的状态：取当日或此前最后一笔模拟成交的持仓、占用本金与现金。
+  const baseAt = (date: string) => {
+    let index = 0;
+    base.trades.forEach((trade, i) => { if (trade.date <= date) index = i; });
+    const trade = base.trades[index];
+    return { shares: trade.shares, capitalUsed: trade.capitalUsed ?? 0, cash: index === 0 ? -openingAmount * FEE_RATE : trade.pnl + openingAmount - trade.shares * trade.price };
+  };
+  const manualRows: Trade[] = [];
+  let cumulative = { ds: 0, dcash: 0, dcap: 0 };
+  for (const change of changes) {
+    cumulative = { ds: cumulative.ds + change.ds, dcash: cumulative.dcash + change.dcash, dcap: cumulative.dcap + change.dcap };
+    const item = change.manual;
+    if (!item) continue;
+    const start = baseAt(item.date), sharesAfter = start.shares + cumulative.ds;
+    manualRows.push({
+      manual: true, id: item.id, date: item.date, side: item.side, price: item.price, amount: item.price * item.shares, quantity: item.shares,
+      shares: sharesAfter, capitalUsed: start.capitalUsed + cumulative.dcap,
+      pnl: start.cash + cumulative.dcash + sharesAfter * item.price - openingAmount,
+    });
+  }
+  // 列表按日期排序：同一天模拟成交在前、手动记录在后。
+  const trades = [...base.trades.filter((trade, index) => index === 0 || !removed.has(trade.date)), ...manualRows].sort((a, b) => a.date.localeCompare(b.date));
+
+  const total = changes.reduce((sum, change) => ({ ds: sum.ds + change.ds, dcash: sum.dcash + change.dcash, dbuys: sum.dbuys + change.dbuys, dsells: sum.dsells + change.dsells }), { ds: 0, dcash: 0, dbuys: 0, dsells: 0 });
+  // 曲线：自增删当日起逐日叠加累计影响。
+  let pointer = 0, run = { ds: 0, dcash: 0, dcap: 0 };
+  const series = base.series.map(point => {
+    while (pointer < changes.length && changes[pointer].date <= point.date) {
+      run = { ds: run.ds + changes[pointer].ds, dcash: run.dcash + changes[pointer].dcash, dcap: run.dcap + changes[pointer].dcap };
+      pointer++;
+    }
+    return { ...point, positionValue: point.positionValue + run.ds * point.current, capitalUsed: point.capitalUsed + run.dcap, pnl: point.pnl + run.dcash + run.ds * point.current };
+  });
+  const delta = total.dcash + total.ds * base.current;
+
+  // 下一格基准：列表最上面一条不是模拟的最后一笔时，以它的成交价为上次成交价。
+  const top = trades.at(-1)!;
+  const topIsBaseLast = !top.manual && top.date === base.lastTradeDate;
+  const lastTrade = topIsBaseLast ? base.lastTrade : top.price, lastTradeDate = topIsBaseLast ? base.lastTradeDate : top.date;
+  const nextBuy = tick(lastTrade - row.step + row.rebound), nextSell = tick(lastTrade + row.step - row.pullback);
+  return {
+    ...base, trades, series, lastTrade, lastTradeDate, nextBuy, nextSell, buyTrigger: nextBuy, sellTrigger: nextSell,
+    pnl: base.pnl + delta, value: base.value + delta, position: (base.position ?? 0) + total.ds,
+    maxCapital: Math.max(...series.map(point => point.capitalUsed)),
+    buys: base.buys + total.dbuys, sells: base.sells + total.dsells,
   };
 }
 

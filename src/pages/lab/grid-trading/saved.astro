@@ -26,7 +26,7 @@ const detailUrl = href('lab/grid-trading/detail');
 <script>
   import {
     readRecords, writeRecords, saveRecord, refreshRecord, refreshRecords, removeRecords, syncAll, pushRecord, withParamChange,
-    gridStatus, formatMoney, formatPrice, tick, SYNC_KEY_STORAGE,
+    gridStatus, openingOf, formatMoney, formatPrice, tick, SYNC_KEY_STORAGE,
     type SavedRecord,
   } from '../../../lib/grid-trading';
 
@@ -47,8 +47,8 @@ const detailUrl = href('lab/grid-trading/detail');
     }
     return capital;
   };
-  // 状态排序：已达步长的排在前面，再按离成交/步长的距离由近到远。
-  const statusRank = (item: SavedRecord) => { const status = gridStatus(item); return status ? (status.reached ? 0 : 1) * 10 + Math.abs(status.gap) : 99; };
+  // 状态排序：先按方向分两组（离买入价近的在上、离卖出价近的在下，无状态的垫底），组内按距离的绝对值排序。
+  const statusKey = (item: SavedRecord) => { const status = gridStatus(item); return { group: status ? (status.tone === 'buy' ? 0 : 1) : 2, distance: status ? Math.abs(status.gap) : 0 }; };
   type SortField = 'status' | 'last-buy' | 'capital' | 'pnl';
   let sortField: SortField | null = null;
   let sortOrder: 'asc' | 'desc' = 'desc';
@@ -104,7 +104,7 @@ const detailUrl = href('lab/grid-trading/detail');
         if (aDate === '—' || bDate === '—') return aDate === bDate ? 0 : aDate === '—' ? 1 : -1;
         return aDate.localeCompare(bDate) * direction;
       }
-      if (sortField === 'status') return (statusRank(a) - statusRank(b)) * -direction;
+      if (sortField === 'status') { const x = statusKey(a), y = statusKey(b); return x.group - y.group || (x.distance - y.distance) * direction; }
       return (sortField === 'capital' ? currentCapital(a) - currentCapital(b) : a.result.pnl - b.result.pnl) * direction;
     });
   }
@@ -164,8 +164,8 @@ const detailUrl = href('lab/grid-trading/detail');
                 ${paramCell(item, 'pullback')}
                 <td>¥${formatInt.format(item.row.gridAmount)}</td>
                 <td>${item.row.date}</td>
-                <td>${item.row.initialPrice}</td>
-                <td>¥${formatInt.format(item.row.initialAmount)}</td>
+                <td>${openingOf(item).price}</td>
+                <td>¥${openingOf(item).amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</td>
                 <td class="computed">${item.result.buys} / ${item.result.sells}</td>
                 <td class="computed">¥${formatInt.format(currentCapital(item))}</td>
                 <td class="computed pnl ${item.result.pnl >= 0 ? 'up' : 'down'}">${formatMoney(item.result.pnl)}</td>
@@ -254,7 +254,7 @@ const detailUrl = href('lab/grid-trading/detail');
     if (sortButton?.dataset.sort) {
       const field = sortButton.dataset.sort as SortField;
       if (sortField === field) sortOrder = sortOrder === 'desc' ? 'asc' : 'desc';
-      else { sortField = field; sortOrder = 'desc'; }
+      else { sortField = field; sortOrder = field === 'status' ? 'asc' : 'desc'; }
       render();
       return;
     }

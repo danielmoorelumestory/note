@@ -13,14 +13,27 @@ const savedUrl = href('lab/grid-trading/saved');
     <div class="chart-head"><div><h2>资金与收盘价变化曲线</h2><p>当前标的的历史回测数据；收盘价及预计买卖价使用右侧刻度</p></div><div class="legend"><span class="line position"></span>持仓市值 <span class="line capital"></span>占用本金 <span class="line profit"></span>总盈亏 <span class="line close"></span>收盘价 <span class="line buy-level"></span>预计买入 <span class="line sell-level"></span>预计卖出</div></div>
     <div class="chart-scroll"><svg id="equity-chart" viewBox="0 0 920 300" role="img" aria-label="当前标的的资金与收盘价变化曲线"><text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">读取已保存回测数据后显示曲线</text></svg></div>
   </section>
-  <section class="history"><h2>历史成交</h2><p>成交价格、成交金额、成交份额可直接修改为真实成交值（如按 100 份整数倍成交），修改份额时金额按“份额 × 成交价”计算；修改后该笔及之后的持仓、盈亏、网格价位会重新计算，并自动同步到云端。持仓市值按该笔成交价估值；“当时占用本金”仅统计成交金额，不含手续费，其最高值与回测摘要中的“最多使用本金”一致。最新成交在最上方。</p><p id="sync-note" class="sync-note" role="status" hidden></p><div class="table-shell"><table class="detail-table"><thead><tr><th>日期</th><th>操作</th><th>成交价格</th><th>成交金额</th><th>成交份额</th><th>成交后持仓份额</th><th>成交后持仓市值</th><th>当时占用本金</th><th>当时总盈亏</th></tr></thead><tbody id="trades"></tbody></table></div></section>
+  <section class="history"><h2>历史成交</h2><p>成交价格、成交金额、成交份额可直接修改为真实成交值（如按 100 份整数倍成交），修改份额时金额按“份额 × 成交价”计算；修改后该笔及之后的持仓、盈亏、网格价位会重新计算，并自动同步到云端。持仓市值按该笔成交价估值；“当时占用本金”仅统计成交金额，不含手续费，其最高值与回测摘要中的“最多使用本金”一致。最新成交在最上方。</p>
+    <p>可添加或删除成交记录（建仓不可删除）：添加时填写日期、方向、成交价格和成交份额，其余数据自动计算并按日期排入列表。增删只影响总盈亏、持仓和占用本金，不改动其他成交行；只有最上面（最新）的一条变化时，才会改变下一格买卖价的基准。</p>
+    <div class="trade-tools"><button id="add-trade-toggle" class="tool-button" type="button">＋ 添加记录</button><button id="restore-removed" class="tool-link" type="button" hidden></button></div>
+    <form id="trade-form" class="trade-form" hidden novalidate>
+      <label>日期 <input id="tf-date" type="date" required></label>
+      <label>方向 <select id="tf-side"><option value="买入">买入</option><option value="卖出">卖出</option></select></label>
+      <label>成交价格 <input id="tf-price" type="number" step="0.001" min="0.001" inputmode="decimal" required></label>
+      <label>成交份额 <input id="tf-shares" type="number" step="100" min="1" inputmode="decimal" required></label>
+      <span id="tf-preview" class="tf-preview">成交金额 —</span>
+      <button id="tf-save" class="tool-primary" type="submit">保存</button>
+      <button id="tf-cancel" class="tool-button" type="button">取消</button>
+      <span id="tf-error" class="tf-error" role="alert"></span>
+    </form>
+    <p id="sync-note" class="sync-note" role="status" hidden></p><div class="table-shell"><table class="detail-table"><thead><tr><th>日期</th><th>操作</th><th>成交价格</th><th>成交金额</th><th>成交份额</th><th>成交后持仓份额</th><th>成交后持仓市值</th><th>当时占用本金</th><th>当时总盈亏</th><th>操作</th></tr></thead><tbody id="trades"></tbody></table></div></section>
 </Base>
 
 <script>
   import {
     calculateGrid, adjustmentsOf, getCandles, fetchQuotes, mergeQuote, refreshRecord, readRecords, saveRecord, pushRecord,
-    renderEquityChart, formatMoney, formatAmount, formatPercent,
-    type SavedRecord, type Trade, type Adjustments,
+    renderEquityChart, holdingValue, openingOf, formatMoney, formatAmount, formatPercent, tick,
+    type SavedRecord, type Trade, type Adjustments, type GridResult,
   } from '../../../lib/grid-trading';
 
   type AdjustField = 'price' | 'amount' | 'shares';
@@ -37,7 +50,7 @@ const savedUrl = href('lab/grid-trading/saved');
   function render(item: SavedRecord) {
     const { row, result } = item;
     document.querySelector('#title')!.textContent = `${row.name} · ${row.code}`;
-    subtitle.textContent = `${result.range} · 初始价 ${row.initialPrice} · 每格金额 ¥${row.gridAmount.toLocaleString('zh-CN')}`;
+    subtitle.textContent = `${result.range} · 初始价 ${openingOf(item).price} · 每格金额 ¥${row.gridAmount.toLocaleString('zh-CN')}`;
     // 预计买卖价是固定成交价，日内高低价触及即执行。
     const current = result.current;
     const buyReached = current <= result.nextBuy, sellReached = current >= result.nextSell;
@@ -52,20 +65,29 @@ const savedUrl = href('lab/grid-trading/saved');
       <div><span class="${buyReached ? 'warn' : ''}">预计下次买入</span><strong class="down">${price(result.nextBuy)}</strong>${hint(buyHint)}</div>
       <div><span class="${sellReached ? 'warn' : ''}">预计下次卖出</span><strong class="up">${price(result.nextSell)}</strong>${hint(sellHint)}</div>
       <div><span>总盈亏</span><strong class="${result.pnl >= 0 ? 'up' : 'down'}">${formatMoney(result.pnl)}</strong></div>
-      <div><span>持仓市值</span><strong>¥${formatAmount(result.value)}</strong></div>
+      <div><span>持仓市值</span><strong>¥${formatAmount(holdingValue(result))}</strong></div>
       <div><span>最多使用本金</span><strong>¥${formatAmount(result.maxCapital)}</strong></div>
       <div><span>买入 / 卖出</span><strong>${result.buys} / ${result.sells}</strong></div>
     `;
     let derivedCapital = 0;
+    const lastIndex = result.trades.length - 1;
     const rows = result.trades.map((t, index) => {
       // 兼容早期保存的记录：没有 capitalUsed 时按成交额反推当时占用本金。
       if (typeof t.capitalUsed === 'number') derivedCapital = t.capitalUsed;
       else if (index === 0) derivedCapital = t.amount;
       else derivedCapital += t.side === '买入' ? t.amount : -t.amount;
       const number2 = (v: number) => v.toLocaleString('zh-CN', { maximumFractionDigits: 2 });
-      return `<tr><td>${t.date}</td><td><b class="${t.side === '卖出' ? 'sell' : 'buy'}">${t.side}</b></td><td>${editableCell(t, 'price')}</td><td>${editableCell(t, 'amount')}</td><td>${editableCell(t, 'shares')}</td><td>${number2(t.shares)}</td><td>¥${number2(t.shares * t.price)}</td><td>¥${number2(derivedCapital)}</td><td class="${t.pnl >= 0 ? 'up' : 'down'}">${formatMoney(t.pnl)}</td></tr>`;
+      // 手动记录的价格、金额、份额为只读（错了请删除后重新添加）；网格成交仍可直接修正。
+      const cells = t.manual
+        ? `<td>${t.price.toFixed(3)}</td><td>${t.amount.toFixed(2)}</td><td>${Number((t.quantity ?? t.amount / t.price).toFixed(2))}</td>`
+        : `<td>${editableCell(t, 'price')}</td><td>${editableCell(t, 'amount')}</td><td>${editableCell(t, 'shares')}</td>`;
+      const tag = t.manual ? '<i class="manual-tag">手动</i>' : '';
+      const action = t.side === '建仓' ? '' : `<button type="button" class="delete-trade" data-kind="${t.manual ? 'manual' : 'grid'}" data-key="${t.manual ? t.id : t.date}" data-top="${index === lastIndex ? '1' : '0'}">删除</button>`;
+      return `<tr${t.manual ? ' class="manual-row"' : ''}><td>${t.date}</td><td><b class="${t.side === '卖出' ? 'sell' : 'buy'}">${t.side}</b>${tag}</td>${cells}<td>${number2(t.shares)}</td><td>¥${number2(t.shares * t.price)}</td><td>¥${number2(derivedCapital)}</td><td class="${t.pnl >= 0 ? 'up' : 'down'}">${formatMoney(t.pnl)}</td><td>${action}</td></tr>`;
     });
     document.querySelector('#trades')!.innerHTML = rows.reverse().join('');
+    const restore = document.querySelector('#restore-removed') as HTMLButtonElement, removedCount = item.removedTrades?.length ?? 0;
+    restore.hidden = !removedCount; restore.textContent = `恢复已删除的 ${removedCount} 条网格成交`;
     renderEquityChart(document.querySelector('#equity-chart') as SVGSVGElement, result.series ?? [], result.nextBuy, result.nextSell, result.trades);
   }
 
@@ -81,29 +103,103 @@ const savedUrl = href('lab/grid-trading/saved');
     return `<span class="price-edit"><input class="price-input${field === 'price' ? '' : ' amount-input'}${adjusted ? ' adjusted' : ''}" type="number" inputmode="decimal" step="${config.step}" min="0.001" value="${shown}" data-date="${t.date}" data-field="${field}" data-digits="${config.digits}" data-original="${Number(shown).toFixed(config.digits)}" aria-label="${t.date} ${config.label}"><button type="button" class="confirm-edit" hidden>确认</button></span>`;
   }
 
-  // 修正成交值：用缓存日线立即重算并保存，再把该条记录推送到云端；全程原地刷新，不重载页面。
-  async function applyAdjustment(field: AdjustField, date: string, value: number) {
-    if (!record) return;
-    const current = adjustmentsOf(record);
-    const next: Adjustments = { ...current, price: { ...current.price }, amount: { ...current.amount }, shares: { ...current.shares } };
-    // 金额与份额互相决定，同一笔只保留最后修改的那一项。
-    if (field !== 'price') { delete next.amount![date]; delete next.shares![date]; }
-    else delete next.price![date];
-    next[field]![date] = value;
-    subtitle.textContent = '正在按修正后的成交数据重新计算…';
-    try {
-      const candles = mergeQuote(await getCandles(record.row.code, record.row.date), (await fetchQuotes([record.row.code])).get(record.row.code));
-      if (!candles.length) throw new Error('没有可用日线');
-      record = { ...record, priceOverrides: next.price, amountOverrides: next.amount, sharesOverrides: next.shares, updatedAt: new Date().toISOString(), result: calculateGrid(record.row, candles, next) };
-      saveRecord(record);
-      render(record);
-    } catch {
-      subtitle.textContent = '行情获取失败，修正未保存，请稍后重试';
-      render(record);
-      return;
-    }
+  // 保存修改并重算：用缓存日线立即重算，写入本机后原地刷新，再把该条记录推送到云端（不重载页面）。
+  // validate 返回非空文字时表示不允许保存，此时不写入任何数据。
+  async function commit(mutate: (item: SavedRecord) => SavedRecord, validate?: (result: GridResult) => string): Promise<string> {
+    if (!record) return '';
+    const next = mutate(record);
+    const candles = mergeQuote(await getCandles(next.row.code, next.row.date), (await fetchQuotes([next.row.code])).get(next.row.code));
+    if (!candles.length) throw new Error('没有可用日线');
+    const result = calculateGrid(next.row, candles, adjustmentsOf(next));
+    const problem = validate?.(result) ?? '';
+    if (problem) return problem;
+    record = { ...next, updatedAt: new Date().toISOString(), result };
+    saveRecord(record);
+    render(record);
     showNote('正在同步到云端…');
     showNote(await pushRecord(record));
+    return '';
+  }
+
+  // 修正网格成交的真实成交价/金额/份额。
+  async function applyAdjustment(field: AdjustField, date: string, value: number) {
+    subtitle.textContent = '正在按修正后的成交数据重新计算…';
+    try {
+      await commit(item => {
+        const current = adjustmentsOf(item);
+        const next: Adjustments = { ...current, price: { ...current.price }, amount: { ...current.amount }, shares: { ...current.shares } };
+        // 金额与份额互相决定，同一笔只保留最后修改的那一项。
+        if (field !== 'price') { delete next.amount![date]; delete next.shares![date]; }
+        else delete next.price![date];
+        next[field]![date] = value;
+        return { ...item, priceOverrides: next.price, amountOverrides: next.amount, sharesOverrides: next.shares };
+      });
+    } catch {
+      subtitle.textContent = '行情获取失败，修正未保存，请稍后重试';
+      if (record) render(record);
+    }
+  }
+
+  // 手动增删记录只影响总盈亏、持仓和占用本金：卖出份额不能超过当时持仓，删除也不能让持仓变成负数。
+  const positionProblem = (message: string) => (result: GridResult) =>
+    (result.position ?? 0) < -1e-6 || result.trades.some(trade => trade.manual && trade.shares < -1e-6) ? message : '';
+
+  function bindTradeTools() {
+    const form = document.querySelector('#trade-form') as HTMLFormElement;
+    const field = (name: string) => document.querySelector(`#tf-${name}`) as HTMLInputElement;
+    const error = document.querySelector('#tf-error') as HTMLElement;
+    const preview = document.querySelector('#tf-preview') as HTMLElement;
+    const updatePreview = () => {
+      const amount = Number(field('price').value) * Number(field('shares').value);
+      preview.textContent = amount > 0 ? `成交金额 ¥${formatAmount(amount)}` : '成交金额 —';
+    };
+    const lastDate = () => record?.result.series?.at(-1)?.date ?? new Date().toISOString().slice(0, 10);
+    document.querySelector('#add-trade-toggle')!.addEventListener('click', () => {
+      if (!record) return;
+      form.hidden = !form.hidden;
+      if (form.hidden) return;
+      field('date').min = record.row.date; field('date').max = lastDate(); field('date').value = lastDate();
+      error.textContent = ''; field('price').focus();
+    });
+    document.querySelector('#tf-cancel')!.addEventListener('click', () => { form.hidden = true; form.reset(); error.textContent = ''; updatePreview(); });
+    form.addEventListener('input', updatePreview);
+    form.addEventListener('submit', async event => {
+      event.preventDefault();
+      if (!record) return;
+      const date = field('date').value, side = (document.querySelector('#tf-side') as HTMLSelectElement).value as '买入' | '卖出';
+      const tradePrice = Number(field('price').value), shares = Number(field('shares').value);
+      if (!date || date < record.row.date || date > lastDate()) { error.textContent = `日期需在 ${record.row.date} 至 ${lastDate()} 之间`; return; }
+      if (!(tradePrice > 0) || !(shares > 0)) { error.textContent = '请填写大于 0 的成交价格和成交份额'; return; }
+      const save = document.querySelector('#tf-save') as HTMLButtonElement;
+      save.disabled = true; error.textContent = '';
+      try {
+        const problem = await commit(
+          item => ({ ...item, manualTrades: [...(item.manualTrades ?? []), { id: crypto.randomUUID(), date, side, price: tick(tradePrice), shares: Number(shares.toFixed(2)) }] }),
+          positionProblem('卖出份额超过当时持仓，无法保存'),
+        );
+        if (problem) error.textContent = problem;
+        else { form.hidden = true; form.reset(); updatePreview(); }
+      } catch { error.textContent = '行情获取失败，请稍后重试'; }
+      save.disabled = false;
+    });
+
+    document.querySelector('#restore-removed')!.addEventListener('click', () => {
+      commit(item => ({ ...item, removedTrades: [] })).catch(() => showNote('行情获取失败，请稍后重试'));
+    });
+    document.querySelector('#trades')!.addEventListener('click', event => {
+      const button = (event.target as HTMLElement).closest('.delete-trade') as HTMLButtonElement | null;
+      if (!button) return;
+      const isTop = button.dataset.top === '1', key = button.dataset.key!;
+      const tip = `确认删除这条成交记录？\n删除只影响总盈亏、持仓和占用本金，不改动其他成交行。${isTop ? '\n这是最新的一条，删除后下一格买卖价将以上一条成交价为基准。' : ''}`;
+      if (!confirm(tip)) return;
+      button.disabled = true;
+      commit(item => button.dataset.kind === 'manual'
+        ? { ...item, manualTrades: (item.manualTrades ?? []).filter(trade => trade.id !== key) }
+        : { ...item, removedTrades: [...new Set([...(item.removedTrades ?? []), key])] },
+      positionProblem('删除后持仓将变为负数，无法删除'))
+        .then(problem => { if (problem) { showNote(problem); button.disabled = false; } })
+        .catch(() => { showNote('行情获取失败，请稍后重试'); button.disabled = false; });
+    });
   }
 
   function bindEditing() {
@@ -140,6 +236,7 @@ const savedUrl = href('lab/grid-trading/saved');
   } else {
     render(record);
     bindEditing();
+    bindTradeTools();
     // 先显示已保存快照，再用最新行情（日线按天缓存、报价 60 秒缓存）重算并原地更新。
     const snapshot = record;
     refreshRecord(snapshot).then(updated => {
@@ -186,8 +283,8 @@ const savedUrl = href('lab/grid-trading/saved');
   .stats .down { color: #16a34a !important; font-weight: 600; }
 
   .detail-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .detail-table th { height: 46px; padding: 11px 13px; background: #f8fafc; color: #475569; font-size: 12px; font-weight: 600; text-align: center; border-bottom: 1px solid #cbd5e1; white-space: nowrap; }
-  .detail-table td { height: 50px; padding: 8px 13px; border-bottom: 1px solid #f1f5f9; text-align: center; vertical-align: middle; white-space: nowrap; font-variant-numeric: tabular-nums; color: #334155; }
+  .detail-table th { height: 46px; padding: 11px 9px; background: #f8fafc; color: #475569; font-size: 12px; font-weight: 600; text-align: center; border-bottom: 1px solid #cbd5e1; white-space: nowrap; }
+  .detail-table td { height: 50px; padding: 8px 9px; border-bottom: 1px solid #f1f5f9; text-align: center; vertical-align: middle; white-space: nowrap; font-variant-numeric: tabular-nums; color: #334155; }
   .detail-table tbody tr { transition: background-color .15s ease; }
   .detail-table tbody tr:hover { background-color: #f8fafc; }
   .detail-table tr:last-child td { border-bottom: 0; }
@@ -207,4 +304,28 @@ const savedUrl = href('lab/grid-trading/saved');
   .detail-table .confirm-edit:disabled { opacity: .6; cursor: wait; }
   .detail-table .confirm-edit[hidden] { display: none; }
   .detail-table .down { color: #16a34a; font-weight: 600; }
+  .detail-table .manual-tag { margin-left: 5px; padding: 1px 5px; border-radius: 3px; background: #eef2ff; color: #4f46e5; font-size: 10px; font-style: normal; font-weight: 600; vertical-align: 1px; }
+  .detail-table .manual-row { background: #fafaff; }
+  .detail-table .delete-trade { border: 1px solid #fecaca; border-radius: 5px; padding: 2px 9px; background: #fef2f2; color: #dc2626; font-size: 11px; cursor: pointer; }
+  .detail-table .delete-trade:hover { background: #fee2e2; border-color: #fca5a5; }
+  .detail-table .delete-trade:disabled { opacity: .5; cursor: wait; }
+
+  .trade-tools { display: flex; align-items: center; gap: 12px; margin: 0 0 10px; }
+  .tool-button, .tool-primary { border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 12px; background: #fff; color: #334155; font-size: 12px; font-weight: 500; cursor: pointer; }
+  .tool-button:hover { border-color: #94a3b8; background: #f8fafc; }
+  .tool-primary { border-color: #0369a1; background: #0369a1; color: #fff; }
+  .tool-primary:hover { background: #075985; }
+  .tool-primary:disabled { opacity: .6; cursor: wait; }
+  .tool-link { border: 0; padding: 0; background: none; color: #0369a1; font-size: 12px; cursor: pointer; }
+  .tool-link:hover { text-decoration: underline; }
+  .tool-link[hidden] { display: none; }
+  .trade-form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0 0 12px; padding: 12px 14px; border: 1px solid #bae6fd; border-radius: 10px; background: #f0f9ff; color: #475569; font-size: 12px; }
+  .trade-form[hidden] { display: none; }
+  .trade-form label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .trade-form input, .trade-form select { box-sizing: border-box; height: 30px; border: 1px solid #bae6fd; border-radius: 5px; padding: 3px 8px; background: #fff; color: #0f172a; font: inherit; }
+  .trade-form input[type=number] { width: 96px; }
+  .trade-form input:focus, .trade-form select:focus { outline: none; border-color: #0369a1; box-shadow: 0 0 0 2px rgb(3 105 161 / .15); }
+  .tf-preview { min-width: 130px; color: #0369a1; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tf-error { flex-basis: 100%; color: #dc2626; }
+  .tf-error:empty { display: none; }
 </style>

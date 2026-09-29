@@ -49,7 +49,7 @@ import { href } from '../../lib/url';
 
 <script>
   import {
-    calculateGrid, getCandles, fetchQuotes, mergeQuote, renderEquityChart, saveRecord,
+    calculateGrid, getCandles, fetchQuotes, mergeQuote, renderEquityChart, saveRecord, holdingValue,
     type Candle, type GridParams, type GridResult, type SavedRecord,
   } from '../../lib/grid-trading';
 
@@ -97,7 +97,7 @@ import { href } from '../../lib/url';
     (tr.querySelector('.pnl') as HTMLElement).className = `computed pnl ${result.pnl >= 0 ? 'up' : 'down'}`;
     document.querySelector('#summary-title')!.textContent = `${row.name} · ${row.code}`;
     document.querySelector('#summary-range')!.textContent = result.range;
-    document.querySelector('#summary-value')!.textContent = `¥${format.format(result.value)}`;
+    document.querySelector('#summary-value')!.textContent = `¥${format.format(holdingValue(result))}`;
     document.querySelector('#summary-realized')!.textContent = money(result.realized);
     renderEquityChart(document.querySelector('#equity-chart') as SVGSVGElement, result.series, result.nextBuy, result.nextSell, result.trades);
   }
