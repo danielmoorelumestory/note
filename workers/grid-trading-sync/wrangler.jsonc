@@ -1,0 +1,12 @@
+{
+  "name": "grid-trading-sync",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-28",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "grid-trading-sync",
+      "database_id": "5751f7b7-e0c4-4820-8ce1-a1e5943712b2"
+    }
+  ]
+}

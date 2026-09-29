@@ -13,6 +13,13 @@ const detailUrl = href('lab/grid-trading/detail');
     <p class="lede">保存在当前浏览器。点击详情可查看每次建仓、买入和卖出的历史记录。</p>
   </header>
   <div class="actions"><a class="btn-back" href={calculatorUrl}>← 返回计算器</a><button id="clear" class="btn-clear" type="button">清空全部</button></div>
+  <section class="sync-panel" aria-label="云端同步">
+    <div><strong>云端同步</strong><p>在另一台设备输入同一同步密钥，即可访问同一份回测记录。</p></div>
+    <label>同步密钥 <input id="sync-key" type="text" autocomplete="off" spellcheck="false"></label>
+    <button id="copy-sync-key" type="button">复制密钥</button>
+    <button id="sync-records" class="sync-primary" type="button">同步云端</button>
+    <span id="sync-status" role="status"></span>
+  </section>
   <div id="content-area" data-detail-url={detailUrl} data-calc-url={calculatorUrl}></div>
 </Base>
 
@@ -32,6 +39,8 @@ const detailUrl = href('lab/grid-trading/detail');
     };
   };
   const key = 'grid-trading-saved-v1';
+  const syncKeyStorage = 'grid-trading-sync-key-v1';
+  const syncEndpoint = 'https://grid-trading-sync.danielmoore-b0c.workers.dev';
   const container = document.querySelector('#content-area') as HTMLElement;
   const detailUrl = container.dataset.detailUrl!;
   const calcUrl = container.dataset.calcUrl!;
@@ -55,6 +64,11 @@ const detailUrl = href('lab/grid-trading/detail');
   let sortField: SortField | null = null;
   let sortOrder: 'asc' | 'desc' = 'desc';
   const sortMark = (field: SortField) => sortField === field ? (sortOrder === 'asc' ? ' ↑' : ' ↓') : '';
+  const syncInput = document.querySelector('#sync-key') as HTMLInputElement;
+  const syncStatus = document.querySelector('#sync-status') as HTMLElement;
+  const storedSyncKey = localStorage.getItem(syncKeyStorage);
+  syncInput.value = storedSyncKey || `${crypto.randomUUID()}${crypto.randomUUID().replaceAll('-', '')}`;
+  if (!storedSyncKey) localStorage.setItem(syncKeyStorage, syncInput.value);
 
   function read(): RecordItem[] { try { return JSON.parse(localStorage.getItem(key) ?? '[]'); } catch { return []; } }
 
@@ -163,6 +177,36 @@ const detailUrl = href('lab/grid-trading/detail');
     }
   });
 
+  syncInput.addEventListener('input', () => localStorage.setItem(syncKeyStorage, syncInput.value.trim()));
+  document.querySelector('#copy-sync-key')!.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(syncInput.value.trim());
+    syncStatus.textContent = '同步密钥已复制。';
+  });
+  document.querySelector('#sync-records')!.addEventListener('click', async () => {
+    const token = syncInput.value.trim();
+    if (token.length < 16) { syncStatus.textContent = '同步密钥至少需要 16 位。'; return; }
+    const button = document.querySelector('#sync-records') as HTMLButtonElement;
+    button.disabled = true; syncStatus.textContent = '正在同步…';
+    try {
+      const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+      const response = await fetch(syncEndpoint, { headers });
+      if (!response.ok) throw new Error('读取云端记录失败');
+      const remote = (await response.json()).records as RecordItem[];
+      const merged = new Map<string, RecordItem>();
+      for (const item of [...read(), ...remote]) {
+        const previous = merged.get(item.id);
+        if (!previous || new Date(item.savedAt).valueOf() >= new Date(previous.savedAt).valueOf()) merged.set(item.id, item);
+      }
+      const records = [...merged.values()];
+      const put = await fetch(syncEndpoint, { method: 'PUT', headers, body: JSON.stringify({ records }) });
+      if (!put.ok) throw new Error('写入云端记录失败');
+      localStorage.setItem(key, JSON.stringify(records));
+      render(); syncStatus.textContent = `同步完成，共 ${records.length} 条记录。`;
+    } catch {
+      syncStatus.textContent = '同步失败，请检查网络和同步密钥。';
+    } finally { button.disabled = false; }
+  });
+
   document.querySelector('#clear')!.addEventListener('click', () => {
     if (confirm('确认清空所有已保存的回测？')) {
       localStorage.removeItem(key);
@@ -179,6 +223,7 @@ const detailUrl = href('lab/grid-trading/detail');
   .btn-back, .btn-clear { border: 1px solid #cbd5e1; border-radius: 7px; padding: 7px 13px; background: #fff; color: #475569; font-size: 13px; font-weight: 500; text-decoration: none; cursor: pointer; transition: all .15s ease; }
   .btn-back:hover { border-color: #94a3b8; color: #0f172a; background: #f8fafc; }
   .btn-clear:hover { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
+  .sync-panel { display:flex; flex-wrap:wrap; align-items:center; gap:8px 10px; margin:0 0 16px; padding:12px 14px; border:1px solid #bae6fd; border-radius:10px; background:#f0f9ff; color:#475569; font-size:12px; }.sync-panel > div { margin-right:auto; }.sync-panel strong { color:#0369a1; font-size:13px; }.sync-panel p { margin:2px 0 0; }.sync-panel label { display:flex; align-items:center; gap:6px; white-space:nowrap; }.sync-panel input { width:210px; border:1px solid #bae6fd; border-radius:5px; padding:6px 8px; background:#fff; color:#334155; font:12px ui-monospace,monospace; }.sync-panel button { border:1px solid #bae6fd; border-radius:6px; padding:6px 9px; background:#fff; color:#0369a1; font-size:12px; cursor:pointer; }.sync-panel .sync-primary { border-color:#0369a1; background:#0369a1; color:#fff; }.sync-panel button:disabled { opacity:.6; cursor:wait; }.sync-panel #sync-status { color:#64748b; } @media(max-width:700px){.sync-panel > div{width:100%;margin-right:0}.sync-panel label{width:100%}.sync-panel input{flex:1;min-width:0}}
 
   .empty { padding: 48px 24px; border: 1px dashed #cbd5e1; border-radius: 14px; background: #fff; text-align: center; }
   .empty-icon { font-size: 38px; margin-bottom: 12px; }

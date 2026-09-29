@@ -108,7 +108,9 @@ const savedUrl = href('lab/grid-trading/saved');
         for (let page = 0; page < 20; page++) {
           const response = await fetch(`https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${symbol},day,${saved.row.date},${end},640,qfq`);
           if (!response.ok) throw new Error('行情服务暂不可用');
-          const batch: string[][] = (await response.json()).data?.[symbol]?.qfqday ?? [];
+          const payload = await response.json();
+          // 部分 ETF 的前复权接口以 day 返回日线，股票通常为 qfqday。
+          const batch: string[][] = payload.data?.[symbol]?.qfqday ?? payload.data?.[symbol]?.day ?? [];
           if (!batch.length) break;
           lines = [...batch, ...lines];
           const firstDate = batch[0][0];
