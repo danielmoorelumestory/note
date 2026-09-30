@@ -41,6 +41,7 @@ export type Backup = {
   date: string; // 备份时最新交易日
   price: number; pnl: number; holding: number; position: number; capital: number; maxCapital: number;
   buys: number; sells: number; lastTrade: number; lastTradeDate: string;
+  rules?: number; // 快照使用的计算规则版本，缺省为 1（旧规则）
   row: GridParams;
   priceOverrides?: Overrides; amountOverrides?: Overrides; sharesOverrides?: Overrides; paramHistory?: ParamStage[];
   manualTrades?: ManualTrade[]; removedTrades?: string[];
@@ -83,6 +84,10 @@ export const marketSessionOpen = () => {
 };
 export const isEtf = (code: string) => /^(5\d{5}|1[5-8]\d{4})$/.test(code.trim());
 /** ETF 每笔买卖佣金按成交额万分之 1.5 计算，最低收取 ¥5；股票维持原比例佣金及卖出印花税口径。 */
+// 计算规则版本：2 = 网格成交按（每格金额 − 交易费用）取整到 100 股整数倍。
+// 备份冻结的是当时按旧规则算出的快照，规则升级后需按新规则重算，否则与纯网格续跑无法对比。
+export const RULES_VERSION = 2;
+const LOT_SIZE = 100;
 const commission = (code: string, amount: number) => isEtf(code) ? Math.max(5, amount * FEE_RATE) : amount * FEE_RATE;
 // 上交所 ETF / 股票以 5、6、9 开头；其余按深交所处理。
 export const symbolOf = (code: string) => `${/^[569]/.test(code.trim()) ? 'sh' : 'sz'}${code.trim()}`;
@@ -241,6 +246,16 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
     const amount = pick(adjustments.amount, date);
     return amount === undefined ? { amount: modelAmount, quantity: modelAmount / price } : { amount, quantity: amount / price, modelAmount };
   };
+  // 网格成交量：预算 = 每格金额 − 交易费用，按成交价折算后向下取整到 100 股整数倍；预算不足一手则为 0（不成交）。
+  // 例：每格 10000、手续费 5、价格 10 → (10000 − 5) ÷ 10 = 999.5 → 900 股，成交金额 9000，手续费 5。
+  const lotQuantity = (price: number) => Math.floor((row.gridAmount - commission(row.code, row.gridAmount)) / price / LOT_SIZE + 1e-9) * LOT_SIZE;
+  // 网格成交的份额/金额：只改价格时份额不变（金额随价格变化）；份额修正优先，其次按修正金额反推份额。
+  const fillLot = (date: string, modelQuantity: number, modelPrice: number, price: number) => {
+    const quantity = pick(adjustments.shares, date);
+    if (quantity !== undefined) return { amount: quantity * price, quantity, modelAmount: modelQuantity * modelPrice, modelQuantity };
+    const amount = pick(adjustments.amount, date);
+    return amount === undefined ? { amount: modelQuantity * price, quantity: modelQuantity } : { amount, quantity: amount / price, modelAmount: modelQuantity * modelPrice };
+  };
   const opening = fillPrice(row.date, row.initialPrice), openingFill = fillAmount(row.date, row.initialAmount, opening.price), openingAmount = openingFill.amount;
   const openingFee = commission(row.code, openingAmount);
   let cash = -openingFee, shares = openingFill.quantity, cost = openingAmount + openingFee, capitalUsed = openingAmount, maxCapital = capitalUsed;
@@ -255,7 +270,9 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
   const paramsAt = (date: string) => stages.find(stage => date <= stage.until) ?? row;
   const buy = (date: string, modelPrice: number) => {
     const fill = fillPrice(date, modelPrice), tradePrice = fill.price;
-    const amountFill = fillAmount(date, row.gridAmount, tradePrice), amount = amountFill.amount, fee = commission(row.code, amount);
+    const amountFill = fillLot(date, lotQuantity(modelPrice), modelPrice, tradePrice);
+    if (!(amountFill.quantity > 0)) return false; // 每格金额买不起一手，不成交
+    const amount = amountFill.amount, fee = commission(row.code, amount);
     shares += amountFill.quantity; cost += amount + fee; cash -= amount + fee; capitalUsed += amount; maxCapital = Math.max(maxCapital, capitalUsed);
     lastTrade = tradePrice; lastTradeDate = date; buys++;
     trades.push({ date, side: '买入', ...fill, ...amountFill, shares, capitalUsed, pnl: cash + shares * tradePrice - openingAmount });
@@ -263,9 +280,8 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
   };
   const sell = (date: string, modelPrice: number) => {
     const fill = fillPrice(date, modelPrice), tradePrice = fill.price;
-    const modelProceeds = Math.min(shares, row.gridAmount / tradePrice) * tradePrice;
-    // 修正后的卖出份额不能超过当前全部持仓。
-    const amountFill = fillAmount(date, modelProceeds, tradePrice), quantity = Math.min(shares, amountFill.quantity);
+    // 持仓不足一次成交的份额时按实际持仓全部卖出；修正后的卖出份额同样不能超过当前全部持仓。
+    const amountFill = fillLot(date, Math.min(shares, lotQuantity(modelPrice)), modelPrice, tradePrice), quantity = Math.min(shares, amountFill.quantity);
     if (quantity > 0) {
       const proceeds = quantity * tradePrice, netProceeds = proceeds - commission(row.code, proceeds) - proceeds * taxRate, unitCost = cost / shares;
       shares -= quantity; cash += netProceeds; capitalUsed -= proceeds; realized += netProceeds - quantity * unitCost; cost -= quantity * unitCost;
@@ -311,7 +327,7 @@ export function createBackup(record: SavedRecord): Backup {
     id: crypto.randomUUID(), at: new Date().toISOString(), date: last?.date ?? marketToday(),
     price: result.current, pnl: result.pnl, holding: holdingValue(result), position: result.position ?? 0,
     capital: last?.capitalUsed ?? 0, maxCapital: result.maxCapital, buys: result.buys, sells: result.sells,
-    lastTrade: result.lastTrade, lastTradeDate: result.lastTradeDate,
+    lastTrade: result.lastTrade, lastTradeDate: result.lastTradeDate, rules: RULES_VERSION,
     row: { name: row.name, code: row.code, date: row.date, initialPrice: row.initialPrice, initialAmount: row.initialAmount, step: row.step, rebound: row.rebound, pullback: row.pullback, gridAmount: row.gridAmount },
     priceOverrides: record.priceOverrides, amountOverrides: record.amountOverrides, sharesOverrides: record.sharesOverrides, paramHistory: record.paramHistory,
     manualTrades: record.manualTrades, removedTrades: record.removedTrades,
@@ -337,8 +353,13 @@ export function refreshBackupSnapshot(backup: Backup, candles: Candle[]): Backup
   return {
     ...backup, price: result.current, pnl: result.pnl, holding: holdingValue(result), position: result.position ?? 0,
     capital: result.series.at(-1)?.capitalUsed ?? backup.capital, maxCapital: result.maxCapital, buys: result.buys, sells: result.sells,
-    lastTrade: result.lastTrade, lastTradeDate: result.lastTradeDate,
+    lastTrade: result.lastTrade, lastTradeDate: result.lastTradeDate, rules: RULES_VERSION,
   };
+}
+
+/** 备份的快照是按旧规则算的：按当前规则重算并返回新备份；已是最新规则则返回 undefined。 */
+export function upgradeBackup(backup: Backup, candles: Candle[]): Backup | undefined {
+  return (backup.rules ?? 1) < RULES_VERSION ? refreshBackupSnapshot(backup, candles) : undefined;
 }
 
 /** 建仓的实际价格与金额：详情页修正过建仓成交后以修正值为准，否则为创建时填写的设置值。 */

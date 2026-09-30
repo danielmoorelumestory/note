@@ -48,7 +48,7 @@ const savedUrl = href('lab/grid-trading/saved');
 <script>
   import {
     calculateGrid, adjustmentsOf, getCandles, fetchQuotes, mergeQuote, refreshRecord, readRecords, saveRecord, pushRecord,
-    renderEquityChart, renderCompareChart, holdingValue, openingOf, createBackup, replayBackup, refreshBackupSnapshot, formatMoney, formatAmount, formatPercent, tick,
+    renderEquityChart, renderCompareChart, holdingValue, openingOf, createBackup, replayBackup, refreshBackupSnapshot, upgradeBackup, formatMoney, formatAmount, formatPercent, tick,
     type SavedRecord, type Trade, type Adjustments, type GridResult, type Backup, type CompareMetric, type EquityPoint,
   } from '../../../lib/grid-trading';
 
@@ -68,6 +68,8 @@ const savedUrl = href('lab/grid-trading/saved');
   const subtitle = document.querySelector('#subtitle') as HTMLElement;
   const price = (v?: number) => typeof v === 'number' && Number.isFinite(v) ? `¥${v.toFixed(3)}` : '—';
   let record = readRecords().find(item => item.id === id);
+  // 用户修改计数：行情刷新期间用户做过修改就丢弃刷新结果；备份规则升级等后台改动不计入。
+  let editRevision = 0;
 
   function showNote(text: string) {
     const note = document.querySelector('#sync-note') as HTMLElement;
@@ -177,17 +179,29 @@ const savedUrl = href('lab/grid-trading/saved');
     compare.innerHTML = '<p class="backup-empty">正在计算纯网格续跑…</p>';
     try {
       // 纯网格：用备份时冻结的输入在最新行情上续跑，备份日之后完全按网格买卖，不含之后的任何手动微调。
-      const pure = replayBackup(backup, await loadCandles(item));
+      const candles = await loadCandles(item);
       if (run !== backupRun) return; // 已有更新的渲染，丢弃过期结果
+      // 备份的快照按旧规则算出时，按当前规则重算并保存（不改动记录的修改时间，也不触发同步）。
+      const upgraded = upgradeBackup(backup, candles);
+      if (upgraded) { persistBackup(upgraded); void renderBackups(record ?? item); return; }
+      const pure = replayBackup(backup, candles);
       showComparison(backup, pure, item.result);
     } catch {
       if (run === backupRun) { compare.innerHTML = '<p class="backup-empty">行情获取失败，暂时无法对比。</p>'; chartBlock.hidden = true; }
     }
   }
 
+  // 只替换某个备份（规则升级重算快照用），不改记录的修改时间。
+  function persistBackup(next: Backup) {
+    if (!record) return;
+    record = { ...record, backups: (record.backups ?? []).map(entry => entry.id === next.id ? next : entry) };
+    saveRecord(record);
+  }
+
   // 备份的增删只改记录本身（不需要重算），保存后同步到云端。
   async function saveBackups(mutate: (item: SavedRecord) => SavedRecord) {
     if (!record) return;
+    editRevision++;
     record = { ...mutate(record), updatedAt: new Date().toISOString() };
     saveRecord(record);
     render(record);
@@ -241,6 +255,7 @@ const savedUrl = href('lab/grid-trading/saved');
     const result = calculateGrid(next.row, candles, adjustmentsOf(next));
     const problem = validate?.(result) ?? '';
     if (problem) return problem;
+    editRevision++;
     record = { ...next, updatedAt: new Date().toISOString(), result };
     saveRecord(record);
     render(record);
@@ -404,12 +419,15 @@ const savedUrl = href('lab/grid-trading/saved');
     bindEditing();
     try {
       const candles = cachedBackupCandles = await loadCandles(backup);
-      const result = replayBackup(backup, candles);
-      render(backupRecordOf(source, backup, result));
+      const upgraded = upgradeBackup(backup, candles);
+      if (upgraded) { viewBackup = upgraded; persistBackup(upgraded); }
+      const current = upgraded ?? backup;
+      const result = replayBackup(current, candles);
+      render(backupRecordOf(record ?? source, current, result));
       // 当前数据：与详情页相同的计算（含手动增删、修正与参数变更），用于和纯网格续跑对比。
       viewLiveResult = calculateGrid(source.row, candles, adjustmentsOf(source));
       (document.querySelector('#backup-desc') as HTMLElement).textContent = '以下为本备份与当前数据的对比（只读），内容与当前详情页的“备份对比”一致。';
-      showComparison(backup, result, viewLiveResult);
+      showComparison(current, result, viewLiveResult);
     } catch { subtitle.textContent = '行情获取失败，暂时无法展示备份走向，请稍后重试。'; }
   }
 
@@ -431,10 +449,11 @@ const savedUrl = href('lab/grid-trading/saved');
     bindTradeTools();
     bindBackups();
     // 先显示已保存快照，再用最新行情（日线按天缓存、报价 60 秒缓存）重算并原地更新。
-    const snapshot = record;
+    const snapshot = record, revision = editRevision;
     refreshRecord(snapshot).then(updated => {
-      if (record !== snapshot) return; // 刷新期间用户已修正，以修正结果为准
-      record = updated; saveRecord(updated); render(updated);
+      if (editRevision !== revision) return; // 刷新期间用户已修正，以修正结果为准
+      // 刷新期间可能已升级备份，保留最新的备份列表。
+      record = { ...updated, backups: record?.backups ?? updated.backups }; saveRecord(record); render(record);
     }).catch(() => { subtitle.textContent = `${snapshot.result.range} · 行情刷新失败，当前显示已保存快照`; })
       .finally(() => { (document.querySelector('#backup-now') as HTMLButtonElement).disabled = false; });
   }
