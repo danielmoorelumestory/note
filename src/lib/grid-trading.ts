@@ -5,6 +5,8 @@ export type Candle = { date: string; close: number; high: number; low: number };
 export type Trade = {
   // manual/id：手动添加的成交记录（详情页“添加记录”），其余为网格模拟成交。
   manual?: boolean; id?: string;
+  // key：成交修正/删除用的键。一天只有一笔成交时等于日期，同一天既买又卖时为“日期#买入/卖出”。缺省时按日期。
+  key?: string;
   date: string; side: string; price: number; amount: number; shares: number; capitalUsed?: number; pnl: number;
   quantity?: number; modelPrice?: number; modelAmount?: number; modelQuantity?: number;
 };
@@ -85,9 +87,9 @@ export const marketSessionOpen = () => {
 };
 export const isEtf = (code: string) => /^(5\d{5}|1[5-8]\d{4})$/.test(code.trim());
 /** ETF 每笔买卖佣金按成交额万分之 1.5 计算，最低收取 ¥5；股票维持原比例佣金及卖出印花税口径。 */
-// 计算规则版本：2 = 网格成交按（每格金额 − 交易费用）取整到 100 股整数倍。
+// 计算规则版本：2 = 网格成交按（每格金额 − 交易费用）取整到 100 股整数倍；3 = T+1 有底仓时同日可既买入又卖出。
 // 备份冻结的是当时按旧规则算出的快照，规则升级后需按新规则重算，否则与纯网格续跑无法对比。
-export const RULES_VERSION = 2;
+export const RULES_VERSION = 3;
 const LOT_SIZE = 100;
 const commission = (code: string, amount: number) => isEtf(code) ? Math.max(5, amount * FEE_RATE) : amount * FEE_RATE;
 // 上交所 ETF / 股票以 5、6、9 开头；其余按深交所处理。
@@ -232,34 +234,39 @@ export function withParamChange(record: SavedRecord, patch: Partial<Pick<GridPar
  */
 function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustments): GridResult {
   const taxRate = isEtf(row.code) ? 0 : STOCK_SELL_TAX_RATE;
-  const pick = (map: Overrides | undefined, date: string) => {
-    const value = map?.[date];
+  // 成交的修正键：一天只有一笔成交时用日期；同一天既买又卖时用“日期#买入/卖出”区分两笔。
+  type Ref = { date: string; side: string; key: string; both: boolean };
+  const refOf = (date: string, side: string, both = false): Ref => ({ date, side, both, key: both ? `${date}#${side}` : date });
+  const pick = (map: Overrides | undefined, ref: Ref) => {
+    // 兼容按日期保存的旧修正：同日两笔时归买入；只有一笔时按日期或“日期#方向”。
+    const value = map?.[ref.key] ?? (ref.both ? (ref.side === '买入' ? map?.[ref.date] : undefined) : map?.[`${ref.date}#${ref.side}`]);
     return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined;
   };
-  const fillPrice = (date: string, modelPrice: number) => {
-    const value = pick(adjustments.price, date);
+  const fillPrice = (ref: Ref, modelPrice: number) => {
+    const value = pick(adjustments.price, ref);
     return value === undefined ? { price: modelPrice } : { price: value, modelPrice };
   };
   // 份额修正优先：金额 = 份额 × 成交价；否则按修正金额反推份额。
-  const fillAmount = (date: string, modelAmount: number, price: number) => {
-    const quantity = pick(adjustments.shares, date);
+  const fillAmount = (ref: Ref, modelAmount: number, price: number) => {
+    const quantity = pick(adjustments.shares, ref);
     if (quantity !== undefined) return { amount: quantity * price, quantity, modelAmount, modelQuantity: modelAmount / price };
-    const amount = pick(adjustments.amount, date);
+    const amount = pick(adjustments.amount, ref);
     return amount === undefined ? { amount: modelAmount, quantity: modelAmount / price } : { amount, quantity: amount / price, modelAmount };
   };
   // 网格成交量：预算 = 每格金额 − 交易费用，按成交价折算后向下取整到 100 股整数倍；预算不足一手则为 0（不成交）。
   // 例：每格 10000、手续费 5、价格 10 → (10000 − 5) ÷ 10 = 999.5 → 900 股，成交金额 9000，手续费 5。
   const lotQuantity = (price: number) => Math.floor((row.gridAmount - commission(row.code, row.gridAmount)) / price / LOT_SIZE + 1e-9) * LOT_SIZE;
   // 网格成交的份额/金额：只改价格时份额不变（金额随价格变化）；份额修正优先，其次按修正金额反推份额。
-  const fillLot = (date: string, modelQuantity: number, modelPrice: number, price: number) => {
-    const quantity = pick(adjustments.shares, date);
+  const fillLot = (ref: Ref, modelQuantity: number, modelPrice: number, price: number) => {
+    const quantity = pick(adjustments.shares, ref);
     if (quantity !== undefined) return { amount: quantity * price, quantity, modelAmount: modelQuantity * modelPrice, modelQuantity };
-    const amount = pick(adjustments.amount, date);
+    const amount = pick(adjustments.amount, ref);
     return amount === undefined ? { amount: modelQuantity * price, quantity: modelQuantity } : { amount, quantity: amount / price, modelAmount: modelQuantity * modelPrice };
   };
-  const opening = fillPrice(row.date, row.initialPrice);
+  const openingRef = refOf(row.date, '建仓');
+  const opening = fillPrice(openingRef, row.initialPrice);
   // 建仓：有初始数量时按“数量 × 价格”算金额（只修正价格时数量不变）；旧记录按初始金额折算数量。
-  const openingFill = row.initialShares !== undefined ? fillLot(row.date, row.initialShares, row.initialPrice, opening.price) : fillAmount(row.date, row.initialAmount, opening.price);
+  const openingFill = row.initialShares !== undefined ? fillLot(openingRef, row.initialShares, row.initialPrice, opening.price) : fillAmount(openingRef, row.initialAmount, opening.price);
   const openingAmount = openingFill.amount;
   const openingFee = commission(row.code, openingAmount);
   let cash = -openingFee, shares = openingFill.quantity, cost = openingAmount + openingFee, capitalUsed = openingAmount, maxCapital = capitalUsed;
@@ -267,31 +274,31 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
   let anchored = !adjustments.anchor;
   // 接口在非交易日会从下一交易日开始返回；该首个实际交易日视为建仓日，建仓当笔总盈亏按其收盘价结算。
   const openingCandle = candles.find(candle => candle.date >= row.date), openingDay = openingCandle?.date;
-  const trades: Trade[] = [{ date: row.date, side: '建仓', ...opening, ...openingFill, shares, capitalUsed, pnl: cash + shares * (openingCandle?.close ?? opening.price) - openingAmount }];
+  const trades: Trade[] = [{ date: row.date, key: openingRef.key, side: '建仓', ...opening, ...openingFill, shares, capitalUsed, pnl: cash + shares * (openingCandle?.close ?? opening.price) - openingAmount }];
   const series: EquityPoint[] = [];
   // 当日适用的参数：取第一个截止日不早于当日的历史段，否则用当前参数。
   const stages = adjustments.params ?? [];
   const paramsAt = (date: string) => stages.find(stage => date <= stage.until) ?? row;
-  const buy = (date: string, modelPrice: number) => {
-    const fill = fillPrice(date, modelPrice), tradePrice = fill.price;
-    const amountFill = fillLot(date, lotQuantity(modelPrice), modelPrice, tradePrice);
+  const buy = (ref: Ref, modelPrice: number) => {
+    const fill = fillPrice(ref, modelPrice), tradePrice = fill.price;
+    const amountFill = fillLot(ref, lotQuantity(modelPrice), modelPrice, tradePrice);
     if (!(amountFill.quantity > 0)) return false; // 每格金额买不起一手，不成交
     const amount = amountFill.amount, fee = commission(row.code, amount);
     shares += amountFill.quantity; cost += amount + fee; cash -= amount + fee; capitalUsed += amount; maxCapital = Math.max(maxCapital, capitalUsed);
-    lastTrade = tradePrice; lastTradeDate = date; buys++;
-    trades.push({ date, side: '买入', ...fill, ...amountFill, shares, capitalUsed, pnl: cash + shares * tradePrice - openingAmount });
+    lastTrade = tradePrice; lastTradeDate = ref.date; buys++;
+    trades.push({ date: ref.date, key: ref.key, side: '买入', ...fill, ...amountFill, shares, capitalUsed, pnl: cash + shares * tradePrice - openingAmount });
     return true;
   };
-  const sell = (date: string, modelPrice: number) => {
-    const fill = fillPrice(date, modelPrice), tradePrice = fill.price;
-    // 持仓不足一次成交的份额时按实际持仓全部卖出；修正后的卖出份额同样不能超过当前全部持仓。
-    const amountFill = fillLot(date, Math.min(shares, lotQuantity(modelPrice)), modelPrice, tradePrice), quantity = Math.min(shares, amountFill.quantity);
-    if (quantity > 0) {
-      const proceeds = quantity * tradePrice, netProceeds = proceeds - commission(row.code, proceeds) - proceeds * taxRate, unitCost = cost / shares;
-      shares -= quantity; cash += netProceeds; capitalUsed -= proceeds; realized += netProceeds - quantity * unitCost; cost -= quantity * unitCost;
-      lastTrade = tradePrice; lastTradeDate = date; sells++;
-      trades.push({ date, side: '卖出', ...fill, ...amountFill, amount: proceeds, quantity, shares, capitalUsed, pnl: cash + shares * tradePrice - openingAmount });
-    }
+  // T+1：sellable 为当日开盘前已持有的份额，只有这部分当天能卖；当日买入的份额不能当天卖出。
+  // 持仓不足一次成交的份额时按可卖持仓全部卖出；修正后的卖出份额同样不能超过可卖持仓。
+  const sell = (ref: Ref, modelPrice: number, sellable: number) => {
+    const fill = fillPrice(ref, modelPrice), tradePrice = fill.price;
+    const amountFill = fillLot(ref, Math.min(sellable, lotQuantity(modelPrice)), modelPrice, tradePrice), quantity = Math.min(sellable, shares, amountFill.quantity);
+    if (!(quantity > 0)) return false;
+    const proceeds = quantity * tradePrice, netProceeds = proceeds - commission(row.code, proceeds) - proceeds * taxRate, unitCost = cost / shares;
+    shares -= quantity; cash += netProceeds; capitalUsed -= proceeds; realized += netProceeds - quantity * unitCost; cost -= quantity * unitCost;
+    lastTrade = tradePrice; lastTradeDate = ref.date; sells++;
+    trades.push({ date: ref.date, key: ref.key, side: '卖出', ...fill, ...amountFill, amount: proceeds, quantity, shares, capitalUsed, pnl: cash + shares * tradePrice - openingAmount });
     return true;
   };
   for (const candle of candles) {
@@ -302,9 +309,17 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
       const params = paramsAt(candle.date);
       const buyPrice = tick(lastTrade - params.step + params.rebound);
       const sellPrice = tick(lastTrade + params.step - params.pullback);
-      // 一根日线不能得知先后顺序；同日两侧均触及时沿用买入优先、每日最多一笔的保守约定。
-      if (candle.low <= buyPrice) buy(candle.date, buyPrice);
-      else if (candle.high >= sellPrice) sell(candle.date, sellPrice);
+      const sellable = shares; // T+1：当日开盘前的持仓才能卖出
+      const touchBuy = candle.low <= buyPrice, touchSell = candle.high >= sellPrice && sellable > 0;
+      if (touchBuy && touchSell) {
+        // 有底仓且当日买卖价都触及：买入和卖出各成交一笔。日线分不清先后，按收盘价更靠近哪一侧推断——
+        // 更靠近的一笔视为后发生，其成交价作为下一格的基准（上次成交价）。
+        const sellLast = Math.abs(candle.close - sellPrice) <= Math.abs(candle.close - buyPrice);
+        const buyRef = refOf(candle.date, '买入', true), sellRef = refOf(candle.date, '卖出', true);
+        if (sellLast) { buy(buyRef, buyPrice); sell(sellRef, sellPrice, sellable); }
+        else { sell(sellRef, sellPrice, sellable); buy(buyRef, buyPrice); }
+      } else if (touchBuy) buy(refOf(candle.date, '买入'), buyPrice);
+      else if (touchSell) sell(refOf(candle.date, '卖出'), sellPrice, sellable);
     }
     series.push({ date: candle.date, current: candle.close, positionValue: shares * candle.close, capitalUsed, pnl: cash + shares * candle.close - openingAmount });
   }
@@ -385,7 +400,12 @@ export function calculateGrid(row: GridParams, candles: Candle[], adjustments: A
  */
 function applyLedger(row: GridParams, base: GridResult, adjustments: Adjustments): GridResult {
   const manual = adjustments.manual ?? [], removed = new Set(adjustments.removed ?? []);
-  const gridRemoved = base.trades.filter((trade, index) => index > 0 && !trade.manual && removed.has(trade.date));
+  // 被删除的网格成交按修正键匹配；兼容按日期保存的旧记录（同日两笔时归买入）。
+  const isRemoved = (trade: Trade) => {
+    const key = trade.key ?? trade.date;
+    return removed.has(key) || (key !== trade.date ? trade.side === '买入' && removed.has(trade.date) : removed.has(`${trade.date}#${trade.side}`));
+  };
+  const gridRemoved = base.trades.filter((trade, index) => index > 0 && !trade.manual && isRemoved(trade));
   if (!manual.length && !gridRemoved.length) return base;
   const taxRate = isEtf(row.code) ? 0 : STOCK_SELL_TAX_RATE;
   const openingAmount = base.trades[0].amount;
@@ -426,7 +446,7 @@ function applyLedger(row: GridParams, base: GridResult, adjustments: Adjustments
     });
   }
   // 列表按日期排序：同一天模拟成交在前、手动记录在后。
-  const trades = [...base.trades.filter((trade, index) => index === 0 || !removed.has(trade.date)), ...manualRows].sort((a, b) => a.date.localeCompare(b.date));
+  const trades = [...base.trades.filter((trade, index) => index === 0 || !isRemoved(trade)), ...manualRows].sort((a, b) => a.date.localeCompare(b.date));
 
   const total = changes.reduce((sum, change) => ({ ds: sum.ds + change.ds, dcash: sum.dcash + change.dcash, dbuys: sum.dbuys + change.dbuys, dsells: sum.dsells + change.dsells }), { ds: 0, dcash: 0, dbuys: 0, dsells: 0 });
   // 曲线：自增删当日起逐日叠加累计影响。
@@ -442,7 +462,8 @@ function applyLedger(row: GridParams, base: GridResult, adjustments: Adjustments
 
   // 下一格基准：列表最上面一条不是模拟的最后一笔时，以它的成交价为上次成交价。
   const top = trades.at(-1)!;
-  const topIsBaseLast = !top.manual && top.date === base.lastTradeDate;
+  // 同一天可能有两笔网格成交，按对象比较：最上面一条仍是模拟的最后一笔时才沿用模拟的上次成交价。
+  const topIsBaseLast = !top.manual && top === base.trades.at(-1);
   const lastTrade = topIsBaseLast ? base.lastTrade : top.price, lastTradeDate = topIsBaseLast ? base.lastTradeDate : top.date;
   const nextBuy = tick(lastTrade - row.step + row.rebound), nextSell = tick(lastTrade + row.step - row.pullback);
   return {
@@ -592,12 +613,13 @@ export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nex
   const crosshair = svg.querySelector('.chart-crosshair') as SVGGElement, tooltip = svg.querySelector('.chart-tooltip') as SVGGElement;
   const set = (selector: string, attrs: Record<string, number | string>) => { const el = svg.querySelector(selector)!; for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, String(value)); };
   const setText = (name: string, text: string) => { tooltip.querySelector(`.tip-${name}`)!.textContent = text; };
-  const tradeByDate = new Map(trades.map(trade => [trade.date, trade]));
+  const tradesByDate = new Map<string, Trade[]>();
+  for (const trade of trades) tradesByDate.set(trade.date, [...(tradesByDate.get(trade.date) ?? []), trade]);
   const showPoint = (event: PointerEvent) => {
     const bounds = svg.getBoundingClientRect();
     const pointerX = (event.clientX - bounds.left) * width / bounds.width, pointerY = (event.clientY - bounds.top) * height / bounds.height;
     const index = Math.max(0, Math.min(series.length - 1, Math.round((pointerX - left) / chartWidth * (series.length - 1))));
-    const point = series[index], xx = x(index), trade = tradeByDate.get(point.date);
+    const point = series[index], xx = x(index), dayTrades = tradesByDate.get(point.date) ?? [];
     set('.crosshair-v', { x1: xx, x2: xx });
     set('.crosshair-h', { y1: pointerY, y2: pointerY });
     set('.dot-position', { cx: xx, cy: y(point.positionValue) });
@@ -605,7 +627,8 @@ export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nex
     set('.dot-profit', { cx: xx, cy: y(point.pnl) });
     set('.dot-current', { cx: xx, cy: priceY(point.current) });
     setText('date', point.date);
-    setText('trade', trade ? `成交  ${trade.side} ${trade.price.toFixed(3)} · ¥${formatAmount(trade.amount)}` : '成交  —');
+    setText('trade', dayTrades.length > 1 ? `成交  ${dayTrades.map(trade => `${trade.side} ${trade.price.toFixed(3)}`).join(' / ')}`
+      : dayTrades.length ? `成交  ${dayTrades[0].side} ${dayTrades[0].price.toFixed(3)} · ¥${formatAmount(dayTrades[0].amount)}` : '成交  —');
     setText('current', `收盘价  ${point.current.toFixed(3)}`);
     setText('position', `持仓市值  ¥${formatAmount(point.positionValue)}`);
     setText('capital', `占用本金  ¥${formatAmount(point.capitalUsed)}`);

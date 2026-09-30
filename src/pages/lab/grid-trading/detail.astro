@@ -118,7 +118,7 @@ const savedUrl = href('lab/grid-trading/saved');
         : `<td>${editableCell(t, 'price')}</td><td>${editableCell(t, 'amount')}</td><td>${editableCell(t, 'shares')}</td>`;
       const afterBackup = !!viewBackup && t.date > viewBackup.date;
       const tag = (t.manual ? '<i class="manual-tag">手动</i>' : '') + (afterBackup ? '<i class="after-tag">备份后</i>' : '');
-      const action = t.side === '建仓' || viewBackup ? '' : `<button type="button" class="delete-trade" data-kind="${t.manual ? 'manual' : 'grid'}" data-key="${t.manual ? t.id : t.date}" data-top="${index === lastIndex ? '1' : '0'}">删除</button>`;
+      const action = t.side === '建仓' || viewBackup ? '' : `<button type="button" class="delete-trade" data-kind="${t.manual ? 'manual' : 'grid'}" data-key="${t.manual ? t.id : (t.key ?? t.date)}" data-top="${index === lastIndex ? '1' : '0'}">删除</button>`;
       return `<tr class="${t.manual ? 'manual-row' : ''}${afterBackup ? ' after-row' : ''}"><td>${t.date}</td><td><b class="${t.side === '卖出' ? 'sell' : 'buy'}">${t.side}</b>${tag}</td>${cells}<td>${number2(t.shares)}</td><td>¥${number2(t.shares * t.price)}</td><td>¥${number2(derivedCapital)}</td><td class="${t.pnl >= 0 ? 'up' : 'down'}">${formatMoney(t.pnl)}</td><td>${action}</td></tr>`;
     });
     document.querySelector('#trades')!.innerHTML = rows.reverse().join('');
@@ -237,7 +237,7 @@ const savedUrl = href('lab/grid-trading/saved');
     }[field];
     const adjusted = typeof config.model === 'number';
     const shown = field === 'shares' ? String(Number(config.value.toFixed(2))) : config.value.toFixed(config.digits);
-    return `<span class="price-edit"><input class="price-input${field === 'price' ? '' : ' amount-input'}${adjusted ? ' adjusted' : ''}" type="number" inputmode="decimal" step="${config.step}" min="0.001" value="${shown}" data-date="${t.date}" data-field="${field}" data-digits="${config.digits}" data-original="${Number(shown).toFixed(config.digits)}" aria-label="${t.date} ${config.label}"><button type="button" class="confirm-edit" hidden>确认</button></span>`;
+    return `<span class="price-edit"><input class="price-input${field === 'price' ? '' : ' amount-input'}${adjusted ? ' adjusted' : ''}" type="number" inputmode="decimal" step="${config.step}" min="0.001" value="${shown}" data-date="${t.key ?? t.date}" data-field="${field}" data-digits="${config.digits}" data-original="${Number(shown).toFixed(config.digits)}" aria-label="${t.date} ${config.label}"><button type="button" class="confirm-edit" hidden>确认</button></span>`;
   }
 
   // 日线（按天缓存）+ 实时报价（60 秒缓存）合并出最新行情。
@@ -297,7 +297,7 @@ const savedUrl = href('lab/grid-trading/saved');
     const candles = cachedBackupCandles = await loadCandles(viewBackup);
     const overrides = withOverride({ price: viewBackup.priceOverrides, amount: viewBackup.amountOverrides, shares: viewBackup.sharesOverrides }, field, date, value);
     let next: Backup = { ...viewBackup, priceOverrides: overrides.price, amountOverrides: overrides.amount, sharesOverrides: overrides.shares };
-    if (date <= next.date) next = refreshBackupSnapshot(next, candles);
+    if (date.slice(0, 10) <= next.date) next = refreshBackupSnapshot(next, candles); // date 可能是“日期#买入/卖出”形式的修正键
     const result = replayBackup(next, candles);
     record = { ...record, backups: (record.backups ?? []).map(entry => entry.id === next.id ? next : entry), updatedAt: new Date().toISOString() };
     viewBackup = next;

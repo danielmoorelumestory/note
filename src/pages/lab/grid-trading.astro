@@ -12,31 +12,35 @@ import { href } from '../../lib/url';
 
   <section class="notice" aria-label="计算说明">
     <span>计算口径</span>
-    <p>下次买入价为上次成交价减网格步长加反弹买入；下次卖出价为上次成交价加网格步长减回落卖出。日内最低价或最高价触及对应价格即成交，不要求先跌破或突破步长线。每次网格成交的份额按（每格金额 − 交易费用）÷ 成交价向下取整到 100 股的整数倍，不足一手则不成交，成交金额 = 份额 × 成交价。ETF 买卖佣金按万分之 1.5、单笔最低 ¥5；A 股卖出另计 0.05% 印花税，ETF 免印花税。同一日同时触及买卖价时，按买入优先、每日最多一笔处理。</p>
+    <p>下次买入价为上次成交价减网格步长加反弹买入；下次卖出价为上次成交价加网格步长减回落卖出。日内最低价或最高价触及对应价格即成交，不要求先跌破或突破步长线。每次网格成交的份额按（每格金额 − 交易费用）÷ 成交价向下取整到 100 股的整数倍，不足一手则不成交，成交金额 = 份额 × 成交价。ETF 买卖佣金按万分之 1.5、单笔最低 ¥5；A 股卖出另计 0.05% 印花税，ETF 免印花税。按 T+1 处理：当日只能卖出上一交易日收盘时已持有的份额（当日买入的不能当天卖出）；有底仓且当日买卖价都触及时，当天买入和卖出各成交一笔，日线分不清先后，按收盘价更靠近哪一侧推断更靠近的一笔后发生，其成交价作为下一格基准；没有底仓时只能买入。</p>
   </section>
 
   <div class="toolbar">
     <div id="status" role="status">准备就绪 · 默认加载沪深 300 ETF 示例</div>
     <div class="toolbar-actions">
       <a class="button secondary" href={href('lab/grid-trading/saved')}>已保存标的</a>
-      <button id="run-all" class="button" type="button">获取数据并回测</button>
+      <button id="save-btn" class="button secondary" type="button">保存标的</button>
     </div>
   </div>
 
   <div class="table-shell">
     <table class="grid-table">
       <thead><tr>
-        <th>代码</th><th>名称</th><th>建仓时间</th><th>初始买入价</th><th>初始数量</th><th>网格步长</th><th>反弹买入</th><th>回落卖出</th><th>每格金额</th><th>当前价格</th><th>上次成交日期</th><th>上次成交价</th><th>预计下次买入</th><th>预计下次卖出</th><th>买 / 卖次数</th><th>最多使用本金</th><th>盈亏金额</th><th>操作</th>
+        <th>代码</th><th>建仓时间</th><th>初始买入价</th><th>初始数量</th><th>网格步长</th><th>反弹买入</th><th>回落卖出</th><th>每格金额</th><th>操作</th>
       </tr></thead>
       <tbody id="grid-body"></tbody>
     </table>
   </div>
 
-  <section class="result-panel">
-    <div><span>选中标的回测摘要</span><strong id="summary-title">—</strong></div>
-    <div><span>历史区间</span><strong id="summary-range">—</strong></div>
-    <div><span>持仓市值</span><strong id="summary-value">—</strong></div>
-    <div><span>已实现盈亏</span><strong id="summary-realized">—</strong></div>
+  <section class="result-panel" aria-label="回测结果摘要">
+    <div><span>标的名称</span><strong id="res-name">—</strong><span class="sub-hint" id="res-code">—</span></div>
+    <div><span>当前价格</span><strong id="res-current">—</strong><span class="sub-hint" id="res-last-date">—</span></div>
+    <div><span id="label-next-buy">预计下次买入</span><strong class="down" id="res-next-buy">—</strong><span class="sub-hint" id="res-buy-hint">—</span></div>
+    <div><span id="label-next-sell">预计下次卖出</span><strong class="up" id="res-next-sell">—</strong><span class="sub-hint" id="res-sell-hint">—</span></div>
+    <div><span>累计盈亏</span><strong id="res-pnl">—</strong><span class="sub-hint" id="res-realized-hint">—</span></div>
+    <div><span>持仓市值</span><strong id="res-value">—</strong><span class="sub-hint" id="res-range-hint">—</span></div>
+    <div><span>最多使用本金</span><strong id="res-max-capital">—</strong></div>
+    <div><span>买 / 卖次数</span><strong id="res-trades-count">—</strong></div>
   </section>
 
   <section class="chart-panel">
@@ -70,7 +74,6 @@ import { href } from '../../lib/url';
   function render() {
     body.innerHTML = rows.map(row => `<tr data-row="${row.id}">
       <td>${editable(row, 'code', 'text', row.code, 'code')}</td>
-      <td class="stock-name">${row.name || '获取行情后自动填充'}</td>
       <td>${editable(row, 'date', 'date', row.date)}</td>
       <td>${editable(row, 'initialPrice', 'number', row.initialPrice)}</td>
       <td>${editable(row, 'initialShares', 'number', row.initialShares)}</td>
@@ -78,8 +81,7 @@ import { href } from '../../lib/url';
       <td>${editable(row, 'rebound', 'number', row.rebound)}</td>
       <td>${editable(row, 'pullback', 'number', row.pullback)}</td>
       <td>${editable(row, 'gridAmount', 'number', row.gridAmount)}</td>
-      <td class="computed current">—</td><td class="computed last-date">—</td><td class="computed last">—</td><td class="computed buy">—</td><td class="computed sell">—</td><td class="computed count">—</td><td class="computed max-capital">—</td><td class="computed pnl">—</td>
-      <td class="row-actions"><button class="save" data-save="${row.id}" type="button">保存</button></td>
+      <td class="row-actions"><button id="run-all" class="button btn-backtest" type="button">开始回测</button></td>
     </tr>`).join('');
     rows.forEach(updateComputed);
   }
@@ -88,18 +90,55 @@ import { href } from '../../lib/url';
     return calculateGrid({ ...row, initialAmount: row.initialShares * row.initialPrice }, row.candles);
   }
   function updateComputed(row: Row) {
-    const tr = body.querySelector(`[data-row="${row.id}"]`) as HTMLTableRowElement | null;
     const result = calculate(row);
-    if (!tr) return;
-    const put = (selector: string, value: string) => { const el = tr.querySelector(selector); if (el) el.textContent = value; };
-    if (!result) { ['.current','.last-date','.last','.buy','.sell','.count','.max-capital','.pnl'].forEach(s => put(s, '—')); return; }
-    put('.current', priceFormat.format(result.current)); put('.last-date', result.lastTradeDate); put('.last', priceFormat.format(result.lastTrade)); put('.buy', priceFormat.format(result.nextBuy)); put('.sell', priceFormat.format(result.nextSell)); put('.count', `${result.buys} / ${result.sells}`); put('.max-capital', `¥${format.format(result.maxCapital)}`);
-    put('.pnl', money(result.pnl));
-    (tr.querySelector('.pnl') as HTMLElement).className = `computed pnl ${result.pnl >= 0 ? 'up' : 'down'}`;
-    document.querySelector('#summary-title')!.textContent = `${row.name} · ${row.code}`;
-    document.querySelector('#summary-range')!.textContent = result.range;
-    document.querySelector('#summary-value')!.textContent = `¥${format.format(holdingValue(result))}`;
-    document.querySelector('#summary-realized')!.textContent = money(result.realized);
+    const put = (id: string, text: string) => {
+      const el = document.querySelector(id);
+      if (el) el.textContent = text;
+    };
+    const buyLabel = document.querySelector('#label-next-buy') as HTMLElement | null;
+    const sellLabel = document.querySelector('#label-next-sell') as HTMLElement | null;
+    const pnlEl = document.querySelector('#res-pnl') as HTMLElement | null;
+
+    if (!result) {
+      ['#res-current', '#res-last-date', '#res-next-buy', '#res-buy-hint', '#res-next-sell', '#res-sell-hint', '#res-pnl', '#res-realized-hint', '#res-value', '#res-range-hint', '#res-max-capital', '#res-trades-count'].forEach(sel => put(sel, '—'));
+      put('#res-name', row.name || '—');
+      put('#res-code', row.code || '—');
+      buyLabel?.classList.remove('warn');
+      sellLabel?.classList.remove('warn');
+      if (pnlEl) pnlEl.className = '';
+      return;
+    }
+
+    const lastTradePrice = result.lastTrade ?? row.initialPrice;
+    const currentPrice = result.current;
+    const step = row.step;
+    const buyStepTarget = typeof lastTradePrice === 'number' && typeof step === 'number' ? lastTradePrice - step : undefined;
+    const sellStepTarget = typeof lastTradePrice === 'number' && typeof step === 'number' ? lastTradePrice + step : undefined;
+    const buyStepReached = typeof currentPrice === 'number' && typeof buyStepTarget === 'number' && currentPrice <= buyStepTarget;
+    const sellStepReached = typeof currentPrice === 'number' && typeof sellStepTarget === 'number' && currentPrice >= sellStepTarget;
+    const buyHint = buyStepReached ? '已达步长 · 待反弹' : (buyStepTarget !== undefined ? `需跌破 ¥${buyStepTarget.toFixed(3)}` : '—');
+    const sellHint = sellStepReached ? '已达步长 · 待回撤' : (sellStepTarget !== undefined ? `需冲破 ¥${sellStepTarget.toFixed(3)}` : '—');
+
+    put('#res-name', row.name || row.code);
+    put('#res-code', row.code);
+    put('#res-current', priceFormat.format(result.current));
+    put('#res-last-date', `上次成交 ${result.lastTradeDate}`);
+    put('#res-next-buy', priceFormat.format(result.nextBuy));
+    put('#res-buy-hint', buyHint);
+    put('#res-next-sell', priceFormat.format(result.nextSell));
+    put('#res-sell-hint', sellHint);
+    buyLabel?.classList.toggle('warn', buyStepReached);
+    sellLabel?.classList.toggle('warn', sellStepReached);
+
+    put('#res-pnl', money(result.pnl));
+    if (pnlEl) pnlEl.className = result.pnl >= 0 ? 'up' : 'down';
+    put('#res-realized-hint', `已实现 ${money(result.realized)}`);
+
+    put('#res-value', `¥${format.format(holdingValue(result))}`);
+    put('#res-range-hint', result.range);
+    put('#res-max-capital', `¥${format.format(result.maxCapital)}`);
+    put('#res-trades-count', `${result.buys} 买 / ${result.sells} 卖`);
+
     renderEquityChart(document.querySelector('#equity-chart') as SVGSVGElement, result.series, result.nextBuy, result.nextSell, result.trades);
   }
   async function load(row: Row) {
@@ -144,27 +183,26 @@ import { href } from '../../lib/url';
       }, 1500);
     }
   }
-  body.addEventListener('click', event => {
-    const button = (event.target as HTMLElement).closest('[data-save]') as HTMLButtonElement | null;
-    if (button && button.dataset.save) {
-      const row = rows.find(item => item.id === Number(button.dataset.save));
-      if (row) saveRow(row, button);
-    }
+  const saveBtn = document.querySelector('#save-btn') as HTMLButtonElement | null;
+  saveBtn?.addEventListener('click', () => {
+    if (rows[0]) saveRow(rows[0], saveBtn);
   });
-  document.querySelector('#run-all')!.addEventListener('click', async () => {
-    const button = document.querySelector('#run-all') as HTMLButtonElement;
+  document.addEventListener('click', async event => {
+    const button = (event.target as HTMLElement).closest('#run-all') as HTMLButtonElement | null;
+    if (!button) return;
     const missingDate = rows.find(r => !r.date || !r.date.trim());
     if (missingDate) {
       alert('请选择买入日期后再获取数据并回测');
       status.textContent = '回测未开始：请先选择买入日期';
       return;
     }
-    button.disabled = true; status.textContent = '正在获取日线并回测…';
+    button.disabled = true;
+    status.textContent = '正在获取日线并回测…';
     const outcomes = await Promise.allSettled(rows.map(load));
     outcomes.forEach((outcome, i) => { if (outcome.status === 'rejected') status.textContent = `${rows[i].code || '该标的'}：${outcome.reason.message}`; });
-    render(); const successful = outcomes.filter(o => o.status === 'fulfilled').length;
+    render();
+    const successful = outcomes.filter(o => o.status === 'fulfilled').length;
     if (successful) status.textContent = `已完成 ${successful} 个标的的历史日线回测`;
-    button.disabled = false;
   });
   render();
 </script>
@@ -180,8 +218,6 @@ import { href } from '../../lib/url';
   .button:hover { background:#075985; }.button:disabled { opacity:.55; cursor:wait; }.button.secondary { border:1px solid #cbd5e1; background:#fff; color:#334155; box-shadow:none; }
   .table-shell {
     overflow-x: auto;
-    overflow-y: hidden;
-    min-height: 160px;
     border: 1px solid #e2e8f0;
     border-radius: 10px;
     background: white;
@@ -193,7 +229,61 @@ import { href } from '../../lib/url';
   .table-shell::-webkit-scrollbar-track { background: transparent; }
   .table-shell::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
   .table-shell::-webkit-scrollbar-thumb:hover { background-color: #94a3b8; }
-  .result-panel { display:grid; grid-template-columns:repeat(4,1fr); gap:1px; overflow:hidden; margin-top:16px; border:1px solid #e2e8f0; border-radius:10px; background:#e2e8f0; }.result-panel div { min-height:74px; padding:13px 16px; background:#fff; }.result-panel span { display:block; margin-bottom:5px; color:#94a3b8; font-size:12px; }.result-panel strong { color:#1e293b; font-size:14px; font-variant-numeric:tabular-nums; }.data-note { margin:14px 2px 0; color:#94a3b8; font-size:12px; line-height:1.65; }
+  .result-panel {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    grid-auto-rows: minmax(96px, auto);
+    gap: 1px;
+    overflow: hidden;
+    margin-top: 16px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #e2e8f0;
+  }
+  .result-panel div {
+    padding: 12px 10px;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  .result-panel span {
+    display: block;
+    margin-bottom: 4px;
+    color: #94a3b8;
+    font-size: 12px;
+    transition: color .15s ease;
+  }
+  .result-panel span.warn {
+    color: #d97706 !important;
+    font-weight: 700;
+  }
+  .result-panel strong {
+    display: block;
+    font-size: 19px;
+    font-weight: 700;
+    line-height: 1.25;
+    font-variant-numeric: tabular-nums;
+    color: #1e293b;
+  }
+  .result-panel .sub-hint {
+    margin-top: 4px;
+    margin-bottom: 0;
+    font-size: 11px;
+    color: #94a3b8;
+    line-height: 1;
+  }
+  .result-panel .up {
+    color: #dc2626 !important;
+    font-weight: 700;
+  }
+  .result-panel .down {
+    color: #16a34a !important;
+    font-weight: 700;
+  }
+  .data-note { margin:14px 2px 0; color:#94a3b8; font-size:12px; line-height:1.65; }
   .chart-panel { margin-top:16px; padding:18px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; }.chart-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:8px; }.chart-head h2 { margin:0 0 3px; color:#1e293b; font-size:16px; }.chart-head p { margin:0; color:#94a3b8; font-size:12px; }.legend { display:flex; flex-wrap:wrap; gap:7px; align-items:center; color:#64748b; font-size:12px; }.line { display:inline-block; width:14px; height:2px; margin-left:5px; }.line.position { background:#2563eb; }.line.capital { background:#f59e0b; }.line.profit { background:#dc2626; }.line.close { background:#7c3aed; }.line.buy-level { border-top:2px dashed #16a34a; }.line.sell-level { border-top:2px dashed #ea580c; }.chart-scroll { overflow-x:auto; }.chart-scroll svg { display:block; width:100%; min-width:680px; height:auto; }.chart-hit-area { fill:transparent; cursor:crosshair; }.crosshair-v,.crosshair-h { stroke:#64748b; stroke-width:1; stroke-dasharray:3 3; pointer-events:none; }.crosshair-dot { stroke:#fff; stroke-width:2; pointer-events:none; }.crosshair-dot.position { fill:#2563eb; }.crosshair-dot.capital { fill:#f59e0b; }.crosshair-dot.profit { fill:#dc2626; }.chart-tooltip { pointer-events:none; }.chart-tooltip rect { fill:#0f172a; fill-opacity:.94; rx:6; }.chart-tooltip text { fill:#f8fafc; font-size:10px; font-variant-numeric:tabular-nums; }.chart-tooltip .tooltip-date { font-weight:700; }
   @media (max-width:640px) { .toolbar { align-items:flex-start; flex-direction:column; }.toolbar-actions { width:100%; }.button { flex:1; }.result-panel { grid-template-columns:repeat(2,1fr); }.notice { flex-direction:column; gap:6px; } }
 </style>
@@ -205,24 +295,62 @@ import { href } from '../../lib/url';
   .grid-table tbody tr { transition: background-color .15s ease; }
   .grid-table tbody tr:hover { background-color: #f8fafc; }
   .grid-table tr:last-child td { border-bottom: 0; }
-  .grid-table .stock-name { min-width: 110px; color: #475569 !important; text-align: center; }
   .grid-table .cell-input { box-sizing: border-box; display: inline-block; margin: 0 auto; width: 80px; height: 34px; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px 8px; background: #f8fafc; color: #0f172a; font: inherit; text-align: center; outline: none; transition: all .15s ease; }
   .grid-table .cell-input:hover { border-color: #cbd5e1; background: #fff; }
   .grid-table .cell-input:focus { border-color: #0284c7; background: #fff; box-shadow: 0 0 0 2px rgba(2, 132, 199, .15); }
   /* 数字输入框不显示上下调整箭头，直接输入即可。 */
   .grid-table .cell-input[type=number] { -moz-appearance: textfield; appearance: textfield; }
   .grid-table .cell-input[type=number]::-webkit-inner-spin-button, .grid-table .cell-input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-  .grid-table .cell-input[type=date] { width: 134px; text-align: center; }
+  .grid-table .cell-input[type=date] {
+    width: 118px;
+    padding: 4px 6px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
   .grid-table .cell-input[type=date]::-webkit-date-and-time-value { text-align: center; }
+  .grid-table .cell-input[type=date]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.55;
+    margin-left: 2px;
+    padding: 1px;
+    transition: opacity .15s ease;
+  }
+  .grid-table .cell-input[type=date]:hover::-webkit-calendar-picker-indicator,
+  .grid-table .cell-input[type=date]:focus::-webkit-calendar-picker-indicator {
+    opacity: 0.9;
+  }
   .grid-table .cell-input[type=text] { width: 88px; text-align: center; }
   .grid-table .cell-input.code { width: 80px; font-family: ui-monospace, monospace; font-weight: 500; }
   .grid-table i { margin-left: 2px; color: #94a3b8; font-style: normal; }
-  .grid-table .computed { min-width: 84px; text-align: center; }
-  .grid-table .up { color: #dc2626 !important; font-weight: 700; }
-  .grid-table .down { color: #16a34a !important; font-weight: 700; }
-  .grid-table .row-actions { min-width: 88px; text-align: center; }
-  .grid-table .save { display: inline-flex; align-items: center; justify-content: center; border: 1px solid #bae6fd; border-radius: 6px; padding: 5px 14px; background: #f0f9ff; color: #0369a1; font-size: 12px; font-weight: 600; cursor: pointer; transition: all .15s ease; user-select: none; position: relative; z-index: 1; }
-  .grid-table .save:hover { background: #e0f2fe; border-color: #7dd3fc; }
-  .grid-table .save:active { transform: scale(0.96); }
-  .grid-table .save.saved { background: #f0fdf4 !important; border-color: #86efac !important; color: #16a34a !important; }
+  .grid-table .row-actions { min-width: 96px; text-align: center; }
+  .grid-table .btn-backtest {
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 34px;
+    padding: 0 16px;
+    border: 0;
+    border-radius: 6px;
+    background: #0369a1;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgb(15 23 42 / .12);
+    transition: all .15s ease;
+    user-select: none;
+  }
+  .grid-table .btn-backtest:hover {
+    background: #075985;
+    box-shadow: 0 2px 4px rgb(15 23 42 / .16);
+  }
+  .grid-table .btn-backtest:active {
+    transform: scale(0.96);
+  }
+  .grid-table .btn-backtest:disabled {
+    opacity: 0.55;
+    cursor: wait;
+  }
 </style>
