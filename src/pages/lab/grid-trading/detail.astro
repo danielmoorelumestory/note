@@ -160,7 +160,7 @@ const savedUrl = href('lab/grid-trading/saved');
     const summary = Math.abs(gain) < 0.005 ? '目前与纯网格没有差别。'
       : `备份以来，手动微调比纯网格<b ${tone(gain)}>${gain >= 0 ? '多赚' : '少赚'} ¥${formatAmount(Math.abs(gain))}</b>${rateOf(liveExtra) !== undefined && rateOf(pureExtra) !== undefined ? `，收益率相差 ${((rateOf(liveExtra)! - rateOf(pureExtra)!) * 100).toFixed(2)} 个百分点` : ''}。`;
     (document.querySelector('#backup-compare') as HTMLElement).innerHTML = `<p class="backup-summary">备份日 ${backup.date} · 备份时价格 ¥${backup.price.toFixed(3)} · 最新价 ¥${live.current.toFixed(3)}　${summary}</p>
-      <div class="table-shell"><table class="compare-table"><thead><tr><th></th><th>备份时</th><th>纯网格续跑</th><th>当前（含手动微调）</th><th>差额（当前 − 纯网格）</th></tr></thead><tbody>${rows.map(([name, a, b, c, d]) => `<tr><td>${name}</td><td>${a}</td><td>${b}</td><td>${c}</td><td>${d}</td></tr>`).join('')}</tbody></table></div>`;
+      <div class="table-shell"><table class="compare-table"><thead><tr><th></th><th>备份时</th><th>纯网格续跑</th><th>当前（含手动微调）</th><th>差额（当前 − 纯网格）</th></tr></thead><tbody>${rows.map(([name, a, b, c, d]) => `<tr><td>${name}</td><td data-label="备份时">${a}</td><td data-label="纯网格">${b}</td><td data-label="当前">${c}</td><td data-label="差额">${d}</td></tr>`).join('')}</tbody></table></div>`;
     compareBackup = backup; pureSeries = pure.series; liveSeries = live.series;
     (document.querySelector('#compare-chart-block') as HTMLElement).hidden = false;
     drawCompare();
@@ -561,6 +561,19 @@ const savedUrl = href('lab/grid-trading/saved');
   .compare-table td:nth-child(4), .compare-table th:nth-child(4) { background: #fafaff; }
   .compare-table .up { color: #dc2626; font-weight: 700; }
   .compare-table .down { color: #16a34a; font-weight: 700; }
+  .backup-compare .table-shell { overflow-x: auto; }
+  /* 手机：对比表改为卡片式，每个指标一块，下面 2×2 显示四个数值，不需要横向滚动 */
+  @media (max-width: 720px) {
+    .compare-table, .compare-table tbody { display: block; width: 100%; }
+    .compare-table thead { display: none; }
+    .compare-table tr { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; padding: 12px 4px; border-bottom: 1px solid #f1f5f9; }
+    .compare-table tr:last-child { border-bottom: 0; }
+    .compare-table td { padding: 0; border: 0; text-align: left; white-space: normal; }
+    .compare-table td:first-child { grid-column: 1 / -1; font-weight: 600; }
+    .compare-table td[data-label]::before { content: attr(data-label); display: block; margin-bottom: 1px; color: #94a3b8; font-size: 11px; font-weight: 400; }
+    .compare-table td:empty { display: none; }
+    .compare-table td:nth-child(4), .compare-table th:nth-child(4) { background: none; }
+  }
   @media (max-width: 720px) { .backup-head { flex-direction: column; } .backup-actions { justify-content: flex-start; } }
   .detail-table .manual-tag { margin-left: 5px; padding: 1px 5px; border-radius: 3px; background: #eef2ff; color: #4f46e5; font-size: 10px; font-style: normal; font-weight: 600; vertical-align: 1px; }
   .detail-table .manual-row { background: #fafaff; }
