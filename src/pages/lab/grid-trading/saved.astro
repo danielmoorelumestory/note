@@ -27,8 +27,11 @@ const detailUrl = href('lab/grid-trading/detail');
   import {
     readRecords, writeRecords, saveRecord, refreshRecord, refreshRecords, removeRecords, syncAll, pushRecord, withParamChange,
     gridStatus, openingOf, formatMoney, formatPrice, tick, marketSessionOpen, marketToday, SYNC_KEY_STORAGE,
+    blockCopy,
     type SavedRecord,
   } from '../../../lib/grid-trading';
+
+  blockCopy(); // 屏蔽页面内容复制
 
   const container = document.querySelector('#content-area') as HTMLElement;
   const detailUrl = container.dataset.detailUrl!;

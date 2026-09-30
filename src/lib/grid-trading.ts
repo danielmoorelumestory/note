@@ -559,6 +559,48 @@ export async function pushRecord(record: SavedRecord): Promise<string> {
 // ---------- 资金曲线 ----------
 
 /**
+ * 屏蔽复制：页面内容不可选中，复制/剪切、右键菜单、移动端长按菜单和拖拽都被拦截。
+ * 输入框仍可正常输入和粘贴；同步密钥输入框可以复制（“复制密钥”按钮走独立的剪贴板接口，不受影响）。
+ * 注意：前端屏蔽只能降低随手复制的可能，挡不住查看源码、开发者工具或截图。
+ */
+export function blockCopy() {
+  if (typeof document === 'undefined' || document.documentElement.classList.contains('no-copy')) return;
+  document.documentElement.classList.add('no-copy');
+  const style = document.createElement('style');
+  style.textContent = '.no-copy, .no-copy * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }'
+    + '.no-copy input, .no-copy textarea, .no-copy select { -webkit-user-select: text; user-select: text; }';
+  document.head.append(style);
+  const closest = (target: EventTarget | null, selector: string) => (target instanceof Element ? target : null)?.closest(selector) ?? null;
+  const inField = (target: EventTarget | null) => !!closest(target, 'input, textarea, select');
+  const keyField = (target: EventTarget | null) => !!closest(target, '#sync-key');
+  for (const type of ['copy', 'cut']) document.addEventListener(type, event => { if (!keyField(event.target)) event.preventDefault(); }, true);
+  for (const type of ['contextmenu', 'selectstart', 'dragstart']) document.addEventListener(type, event => { if (!inField(event.target)) event.preventDefault(); }, true);
+}
+
+/**
+ * 图表按容器实际宽度绘制（最大 920），文字保持原始大小；窄屏（手机）时收紧左右留白，无需横向滚动，
+ * 这样手指横向拖动才能一直用于十字光标。容器尺寸变化（如旋转屏幕）时自动重绘。
+ */
+const resizeObservers = new WeakMap<SVGSVGElement, ResizeObserver>();
+function chartWidthOf(svg: SVGSVGElement) { return Math.max(320, Math.min(920, Math.round(svg.parentElement?.clientWidth || 920))); }
+function watchResize(svg: SVGSVGElement, width: number, draw: () => void) {
+  resizeObservers.get(svg)?.disconnect();
+  if (!svg.parentElement || typeof ResizeObserver === 'undefined') return;
+  const observer = new ResizeObserver(() => { if (Math.abs(chartWidthOf(svg) - width) > 8) draw(); });
+  observer.observe(svg.parentElement);
+  resizeObservers.set(svg, observer);
+}
+
+/**
+ * 移动端触摸加固：长按不弹出复制/选择菜单（禁用文字选中与系统长按菜单，并拦截 contextmenu），
+ * 竖向滑动仍然滚动页面（touch-action: pan-y），手指按下即显示十字光标、左右拖动跟随。
+ */
+function hardenTouch(svg: SVGSVGElement) {
+  for (const [name, value] of [['user-select', 'none'], ['-webkit-user-select', 'none'], ['-webkit-touch-callout', 'none'], ['-webkit-tap-highlight-color', 'transparent'], ['touch-action', 'pan-y']]) svg.style.setProperty(name, value);
+  svg.oncontextmenu = event => { event.preventDefault(); return false; };
+}
+
+/**
  * 绘制走势图，分上下两张图并共用同一条时间轴：
  * 上图“价格”（收盘价、预计买入/卖出价），下图“资金”（持仓市值、占用本金阶梯线、总盈亏）。
  * 各自有边框、标题和纵轴，不再把两套刻度叠在一起；十字光标与备份点竖线同时穿过两张图。
@@ -566,9 +608,11 @@ export async function pushRecord(record: SavedRecord): Promise<string> {
 export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nextBuy: number | undefined, nextSell: number | undefined, trades: Trade[] = [], marker?: { date: string; label: string }) {
   if (!series.length || !Number.isFinite(nextBuy) || !Number.isFinite(nextSell)) { svg.innerHTML = '<text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">暂无完整曲线数据</text>'; return; }
   const buyLevel = nextBuy!, sellLevel = nextSell!;
-  const width = 920, left = 62, right = 70, chartWidth = width - left - right;
+  const width = chartWidthOf(svg), compact = width < 600, left = compact ? 46 : 62, right = compact ? 58 : 70, chartWidth = width - left - right;
+  watchResize(svg, width, () => renderEquityChart(svg, series, nextBuy, nextSell, trades, marker));
   const priceTop = 30, priceHeight = 150, moneyTop = 218, moneyHeight = 150, plotBottom = moneyTop + moneyHeight, height = plotBottom + 30;
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  hardenTouch(svg);
   // 资金：始终包含 0 轴；价格：包含收盘价与预计买卖价。
   const values = series.flatMap(point => [point.positionValue, point.capitalUsed, point.pnl]);
   const min = Math.min(0, ...values), max = Math.max(...values), span = max - min || 1, yMin = min - span * .06, yMax = max + span * .06;
@@ -606,7 +650,7 @@ export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nex
     + `<g class="chart-crosshair" visibility="hidden" pointer-events="none"><line class="crosshair-v" y1="${priceTop}" y2="${plotBottom}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/><line class="crosshair-h" x1="${left}" x2="${width - right}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>`
     + ['position:#3b82f6', 'capital:#f59e0b', 'profit:#f43f5e', 'current:#6366f1'].map(item => { const [name, color] = item.split(':'); return `<circle class="dot-${name}" r="3.5" fill="${color}" stroke="#fff" stroke-width="1.5"/>`; }).join('')
     + `<g class="chart-tooltip"><rect fill="#ffffff" fill-opacity=".97" stroke="#e2e8f0" rx="6"/>${tipLines.map((name, index) => `<text class="tip-${name}" x="10" y="${17 + index * 18}" fill="${index ? '#475569' : '#0f172a'}" font-size="10"${index ? '' : ' font-weight="700"'}/>`).join('')}</g></g>`
-    + `<rect class="chart-hit-area" x="${left}" y="${priceTop}" width="${chartWidth}" height="${plotBottom - priceTop}" fill="transparent" style="cursor:crosshair"/>`;
+    + `<rect class="chart-hit-area" x="${left}" y="${priceTop}" width="${chartWidth}" height="${plotBottom - priceTop}" fill="transparent" style="cursor:crosshair;touch-action:pan-y"/>`;
   const crosshair = svg.querySelector('.chart-crosshair') as SVGGElement, tooltip = svg.querySelector('.chart-tooltip') as SVGGElement;
   const set = (selector: string, attrs: Record<string, number | string>) => { const el = svg.querySelector(selector)!; for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, String(value)); };
   const setText = (name: string, text: string) => { tooltip.querySelector(`.tip-${name}`)!.textContent = text; };
@@ -630,7 +674,7 @@ export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nex
     setText('capital', `占用本金  ¥${formatAmount(point.capitalUsed)}`);
     setText('profit', `总盈亏  ${formatMoney(point.pnl)}`);
     const tooltipWidth = 200, tooltipHeight = 18 * tipLines.length + 8;
-    const tooltipX = xx > width - right - tooltipWidth - 12 ? xx - tooltipWidth - 12 : xx + 12;
+    const tooltipX = Math.max(4, Math.min(width - tooltipWidth - 4, xx > width - right - tooltipWidth - 12 ? xx - tooltipWidth - 12 : xx + 12));
     const tooltipY = Math.max(priceTop, Math.min(plotBottom - tooltipHeight, pointerY - tooltipHeight / 2));
     tooltip.setAttribute('transform', `translate(${tooltipX},${tooltipY})`);
     set('.chart-tooltip rect', { width: tooltipWidth, height: tooltipHeight });
@@ -638,8 +682,11 @@ export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nex
   };
   const hitArea = svg.querySelector('.chart-hit-area')!;
   hitArea.addEventListener('pointermove', event => showPoint(event as PointerEvent));
+  hitArea.addEventListener('pointerdown', event => showPoint(event as PointerEvent)); // 触摸：按下即显示
   // 横向十字线单独设置过可见状态，父级隐藏时它不会跟着隐藏，需要一并收起。
-  hitArea.addEventListener('pointerleave', () => { crosshair.setAttribute('visibility', 'hidden'); set('.crosshair-h', { visibility: 'hidden' }); });
+  const hideCrosshair = () => { crosshair.setAttribute('visibility', 'hidden'); set('.crosshair-h', { visibility: 'hidden' }); };
+  hitArea.addEventListener('pointerleave', hideCrosshair);
+  hitArea.addEventListener('pointercancel', hideCrosshair); // 触摸后转为页面滚动时收起
 }
 
 // ---------- 备份对比曲线 ----------
@@ -658,7 +705,9 @@ export function renderCompareChart(svg: SVGSVGElement, pure: EquityPoint[], live
   // 总盈亏始终包含 0 轴；持仓市值、占用本金按数据范围缩放，避免走势被压扁。
   const lo = metric === 'pnl' ? Math.min(0, ...all) : Math.min(...all), hi = metric === 'pnl' ? Math.max(0, ...all) : Math.max(...all);
   const span = hi - lo || Math.max(Math.abs(hi) * .02, 1), yMin = lo - span * .08, yMax = hi + span * .08;
-  const width = 920, height = 300, left = 62, right = 24, top = 18, bottom = 38, chartWidth = width - left - right, chartHeight = height - top - bottom;
+  const width = chartWidthOf(svg), compact = width < 600, height = 300, left = compact ? 46 : 62, right = compact ? 16 : 24, top = 18, bottom = 38, chartWidth = width - left - right, chartHeight = height - top - bottom;
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  watchResize(svg, width, () => renderCompareChart(svg, pure, live, metric, marker));
   const x = (index: number) => left + index / Math.max(1, pure.length - 1) * chartWidth;
   const y = (value: number) => top + (yMax - value) / (yMax - yMin) * chartHeight;
   const label = (value: number) => yMax - yMin < 20000 ? Math.round(value).toLocaleString('zh-CN') : `${(value / 10000).toFixed(1)}万`;
@@ -673,17 +722,18 @@ export function renderCompareChart(svg: SVGSVGElement, pure: EquityPoint[], live
     ? `<line x1="${x(markerIndex)}" x2="${x(markerIndex)}" y1="${top}" y2="${height - bottom}" stroke="#0ea5e9" stroke-width="1" stroke-dasharray="4 3"/><text x="${x(markerIndex) + (markerIndex > pure.length * .8 ? -5 : 5)}" y="${top + 10}" text-anchor="${markerIndex > pure.length * .8 ? 'end' : 'start'}" fill="#0ea5e9" font-size="10" font-weight="600">${marker.label}</text>` : '';
   const format = metric === 'pnl' ? formatMoney : (value: number) => `¥${formatAmount(value)}`;
   const tipLines = ['date', 'pure', 'live', 'diff'];
+  hardenTouch(svg);
   svg.innerHTML = `<g>${grid}${zero}${markerSvg}</g>`
     + `<path d="${path(pureValues)}" fill="none" stroke="#3b82f6" stroke-width="1.3" stroke-linejoin="round"/><path d="${path(liveValues)}" fill="none" stroke="#f97316" stroke-width="1.3" stroke-dasharray="5 3" stroke-linejoin="round"/>${labels}`
     + `<g class="cmp-crosshair" visibility="hidden" pointer-events="none"><line class="cmp-v" y1="${top}" y2="${height - bottom}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>`
     + `<circle class="cmp-dot-pure" r="3.5" fill="#3b82f6" stroke="#fff" stroke-width="1.5"/><circle class="cmp-dot-live" r="3.5" fill="#f97316" stroke="#fff" stroke-width="1.5"/>`
     + `<g class="cmp-tip"><rect fill="#ffffff" fill-opacity=".97" stroke="#e2e8f0" rx="6"/>${tipLines.map((name, index) => `<text class="cmp-${name}" x="10" y="${17 + index * 18}" fill="${index ? '#475569' : '#0f172a'}" font-size="10"${index ? '' : ' font-weight="700"'}/>`).join('')}</g></g>`
-    + `<rect class="cmp-hit" x="${left}" y="${top}" width="${chartWidth}" height="${chartHeight}" fill="transparent" style="cursor:crosshair"/>`;
+    + `<rect class="cmp-hit" x="${left}" y="${top}" width="${chartWidth}" height="${chartHeight}" fill="transparent" style="cursor:crosshair;touch-action:pan-y"/>`;
   const crosshair = svg.querySelector('.cmp-crosshair') as SVGGElement, tip = svg.querySelector('.cmp-tip') as SVGGElement;
   const set = (selector: string, attrs: Record<string, number | string>) => { const el = svg.querySelector(selector)!; for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, String(value)); };
   const setText = (name: string, text: string) => { tip.querySelector(`.cmp-${name}`)!.textContent = text; };
   const hit = svg.querySelector('.cmp-hit')!;
-  hit.addEventListener('pointermove', event => {
+  const showPoint = (event: Event) => {
     const bounds = svg.getBoundingClientRect(), e = event as PointerEvent;
     const pointerX = (e.clientX - bounds.left) * width / bounds.width, pointerY = (e.clientY - bounds.top) * height / bounds.height;
     const index = Math.max(0, Math.min(pure.length - 1, Math.round((pointerX - left) / chartWidth * (pure.length - 1))));
@@ -693,9 +743,13 @@ export function renderCompareChart(svg: SVGSVGElement, pure: EquityPoint[], live
     setText('date', pure[index].date + (marker && pure[index].date > marker.date ? '（备份后）' : ''));
     setText('pure', `纯网格  ${format(a)}`); setText('live', `当前    ${format(b)}`); setText('diff', `差额    ${metric === 'pnl' ? formatMoney(b - a) : `${b - a >= 0 ? '+' : '-'}¥${formatAmount(Math.abs(b - a))}`}`);
     const tipWidth = 200, tipHeight = 18 * tipLines.length + 8;
-    tip.setAttribute('transform', `translate(${xx > width - right - tipWidth - 12 ? xx - tipWidth - 12 : xx + 12},${Math.max(top, Math.min(height - bottom - tipHeight, pointerY - tipHeight / 2))})`);
+    tip.setAttribute('transform', `translate(${Math.max(4, Math.min(width - tipWidth - 4, xx > width - right - tipWidth - 12 ? xx - tipWidth - 12 : xx + 12))},${Math.max(top, Math.min(height - bottom - tipHeight, pointerY - tipHeight / 2))})`);
     set('.cmp-tip rect', { width: tipWidth, height: tipHeight });
     crosshair.setAttribute('visibility', 'visible');
-  });
-  hit.addEventListener('pointerleave', () => crosshair.setAttribute('visibility', 'hidden'));
+  };
+  const hideCrosshair = () => crosshair.setAttribute('visibility', 'hidden');
+  hit.addEventListener('pointermove', showPoint);
+  hit.addEventListener('pointerdown', showPoint);
+  hit.addEventListener('pointerleave', hideCrosshair);
+  hit.addEventListener('pointercancel', hideCrosshair);
 }

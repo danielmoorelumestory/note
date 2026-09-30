@@ -49,8 +49,11 @@ const savedUrl = href('lab/grid-trading/saved');
   import {
     calculateGrid, adjustmentsOf, getCandles, fetchQuotes, mergeQuote, refreshRecord, readRecords, saveRecord, pushRecord,
     renderEquityChart, renderCompareChart, holdingValue, openingOf, createBackup, replayBackup, refreshBackupSnapshot, upgradeBackup, formatMoney, formatAmount, formatPercent, tick,
+    blockCopy,
     type SavedRecord, type Trade, type Adjustments, type GridResult, type Backup, type CompareMetric, type EquityPoint,
   } from '../../../lib/grid-trading';
+
+  blockCopy(); // 屏蔽页面内容复制
 
   type AdjustField = 'price' | 'amount' | 'shares';
   const id = new URLSearchParams(location.search).get('id');
@@ -482,8 +485,12 @@ const savedUrl = href('lab/grid-trading/saved');
   .table-shell::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
   .table-shell::-webkit-scrollbar-thumb:hover { background-color: #94a3b8; }
   .axis-legend { flex-direction: column; align-items: flex-end; gap: 6px; }.legend-row { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; justify-content: flex-end; gap: 7px; }.axis-tag { padding: 1px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }.axis-tag.tag-money { background: #f1f5f9; color: #334155; }.axis-tag.tag-price { background: #eef2ff; color: #4f46e5; }
-  .chart-panel { margin-top:28px; padding:18px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; }.chart-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:8px; }.chart-head h2 { margin:0 0 3px; color:#1e293b; font-size:16px; }.chart-head p { margin:0; color:#94a3b8; font-size:12px; }.legend { display:flex; flex-wrap:wrap; gap:7px; align-items:center; color:#64748b; font-size:12px; }.line { display:inline-block; width:14px; height:2px; margin-left:5px; }.line.position { background:#3b82f6; }.line.capital { background:#f59e0b; }.line.profit { background:#f43f5e; }.line.close { background:#6366f1; }.line.buy-level { border-top:1.5px dashed #10b981; background:none; height:0; }.line.sell-level { border-top:1.5px dashed #f97316; background:none; height:0; }.chart-scroll { overflow-x:auto; }.chart-scroll svg { display:block; width:100%; min-width:680px; height:auto; }
+  /* 移动端长按图表不弹出复制/选择菜单 */
+  .chart-scroll { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  .chart-panel { margin-top:28px; padding:18px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; }.chart-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:8px; }.chart-head h2 { margin:0 0 3px; color:#1e293b; font-size:16px; }.chart-head p { margin:0; color:#94a3b8; font-size:12px; }.legend { display:flex; flex-wrap:wrap; gap:7px; align-items:center; color:#64748b; font-size:12px; }.line { display:inline-block; width:14px; height:2px; margin-left:5px; }.line.position { background:#3b82f6; }.line.capital { background:#f59e0b; }.line.profit { background:#f43f5e; }.line.close { background:#6366f1; }.line.buy-level { border-top:1.5px dashed #10b981; background:none; height:0; }.line.sell-level { border-top:1.5px dashed #f97316; background:none; height:0; }.chart-scroll { overflow-x:auto; }.chart-scroll svg { display:block; width:100%; height:auto; }
   @media(max-width:640px){.stats{grid-template-columns:repeat(2,1fr)}}
+  /* 手机：图表适配屏幕宽度；标题与图例上下排列，图例可换行 */
+  @media (max-width: 720px) { .chart-head { flex-direction: column; gap: 10px; }.axis-legend { align-items: flex-start; }.legend-row { flex-wrap: wrap; justify-content: flex-start; white-space: normal; } }
 </style>
 
 <style is:global>

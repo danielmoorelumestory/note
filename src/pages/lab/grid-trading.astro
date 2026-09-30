@@ -53,9 +53,11 @@ import { href } from '../../lib/url';
 
 <script>
   import {
-    calculateGrid, getCandles, fetchQuotes, mergeQuote, renderEquityChart, saveRecord, holdingValue,
+    calculateGrid, getCandles, fetchQuotes, mergeQuote, renderEquityChart, saveRecord, holdingValue, blockCopy,
     type Candle, type GridParams, type GridResult, type SavedRecord,
   } from '../../lib/grid-trading';
+
+  blockCopy(); // 屏蔽页面内容复制
 
   // 计算器以“初始数量”为输入，建仓金额 = 数量 × 初始买入价（initialAmount 随之同步，供保存与显示）。
   type Row = GridParams & { id: number; initialShares: number; candles?: Candle[] };
@@ -285,8 +287,12 @@ import { href } from '../../lib/url';
   }
   .data-note { margin:14px 2px 0; color:#94a3b8; font-size:12px; line-height:1.65; }
   .axis-legend { flex-direction: column; align-items: flex-end; gap: 6px; }.legend-row { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; justify-content: flex-end; gap: 7px; }.axis-tag { padding: 1px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }.axis-tag.tag-money { background: #f1f5f9; color: #334155; }.axis-tag.tag-price { background: #eef2ff; color: #4f46e5; }
-  .chart-panel { margin-top:16px; padding:18px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; }.chart-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:8px; }.chart-head h2 { margin:0 0 3px; color:#1e293b; font-size:16px; }.chart-head p { margin:0; color:#94a3b8; font-size:12px; }.legend { display:flex; flex-wrap:wrap; gap:7px; align-items:center; color:#64748b; font-size:12px; }.line { display:inline-block; width:14px; height:2px; margin-left:5px; }.line.position { background:#3b82f6; }.line.capital { background:#f59e0b; }.line.profit { background:#f43f5e; }.line.close { background:#6366f1; }.line.buy-level { border-top:1.5px dashed #10b981; background:none; height:0; }.line.sell-level { border-top:1.5px dashed #f97316; background:none; height:0; }.chart-scroll { overflow-x:auto; }.chart-scroll svg { display:block; width:100%; min-width:680px; height:auto; }.chart-hit-area { fill:transparent; cursor:crosshair; }.crosshair-v,.crosshair-h { stroke:#64748b; stroke-width:1; stroke-dasharray:3 3; pointer-events:none; }.crosshair-dot { stroke:#fff; stroke-width:2; pointer-events:none; }.crosshair-dot.position { fill:#2563eb; }.crosshair-dot.capital { fill:#f59e0b; }.crosshair-dot.profit { fill:#dc2626; }.chart-tooltip { pointer-events:none; }.chart-tooltip rect { fill:#0f172a; fill-opacity:.94; rx:6; }.chart-tooltip text { fill:#f8fafc; font-size:10px; font-variant-numeric:tabular-nums; }.chart-tooltip .tooltip-date { font-weight:700; }
+  /* 移动端长按图表不弹出复制/选择菜单 */
+  .chart-scroll { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+  .chart-panel { margin-top:16px; padding:18px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; }.chart-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:8px; }.chart-head h2 { margin:0 0 3px; color:#1e293b; font-size:16px; }.chart-head p { margin:0; color:#94a3b8; font-size:12px; }.legend { display:flex; flex-wrap:wrap; gap:7px; align-items:center; color:#64748b; font-size:12px; }.line { display:inline-block; width:14px; height:2px; margin-left:5px; }.line.position { background:#3b82f6; }.line.capital { background:#f59e0b; }.line.profit { background:#f43f5e; }.line.close { background:#6366f1; }.line.buy-level { border-top:1.5px dashed #10b981; background:none; height:0; }.line.sell-level { border-top:1.5px dashed #f97316; background:none; height:0; }.chart-scroll { overflow-x:auto; }.chart-scroll svg { display:block; width:100%; height:auto; }.chart-hit-area { fill:transparent; cursor:crosshair; }.crosshair-v,.crosshair-h { stroke:#64748b; stroke-width:1; stroke-dasharray:3 3; pointer-events:none; }.crosshair-dot { stroke:#fff; stroke-width:2; pointer-events:none; }.crosshair-dot.position { fill:#2563eb; }.crosshair-dot.capital { fill:#f59e0b; }.crosshair-dot.profit { fill:#dc2626; }.chart-tooltip { pointer-events:none; }.chart-tooltip rect { fill:#0f172a; fill-opacity:.94; rx:6; }.chart-tooltip text { fill:#f8fafc; font-size:10px; font-variant-numeric:tabular-nums; }.chart-tooltip .tooltip-date { font-weight:700; }
   @media (max-width:640px) { .toolbar { align-items:flex-start; flex-direction:column; }.toolbar-actions { width:100%; }.button { flex:1; }.result-panel { grid-template-columns:repeat(2,1fr); }.notice { flex-direction:column; gap:6px; } }
+  /* 手机：图表适配屏幕宽度；标题与图例上下排列，图例可换行 */
+  @media (max-width: 720px) { .chart-head { flex-direction: column; gap: 10px; }.axis-legend { align-items: flex-start; }.legend-row { flex-wrap: wrap; justify-content: flex-start; white-space: normal; } }
 </style>
 
 <style is:global>
