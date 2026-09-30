@@ -11,8 +11,8 @@ export const labs: Lab[] = [
     summary: '按历史日线高低价回测 ETF / A 股网格的买卖触发与盈亏。',
   },
   {
-    slug: 'text-count',
-    title: '字数统计',
-    summary: '在浏览器里数字符、去空白、行数。文本不离开这台机器。',
+    slug: 'grid-trading/saved',
+    title: '网格列表',
+    summary: '查看已保存的网格回测标的：当前状态、备份对比与成交明细。',
   },
 ];

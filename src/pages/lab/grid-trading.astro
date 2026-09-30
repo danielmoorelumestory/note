@@ -26,7 +26,7 @@ import { href } from '../../lib/url';
   <div class="table-shell">
     <table class="grid-table">
       <thead><tr>
-        <th>代码</th><th>名称</th><th>建仓时间</th><th>初始买入价</th><th>初始金额</th><th>网格步长</th><th>反弹买入</th><th>回落卖出</th><th>每格金额</th><th>当前价格</th><th>上次成交日期</th><th>上次成交价</th><th>预计下次买入</th><th>预计下次卖出</th><th>买 / 卖次数</th><th>最多使用本金</th><th>盈亏金额</th><th>操作</th>
+        <th>代码</th><th>名称</th><th>建仓时间</th><th>初始买入价</th><th>初始数量</th><th>网格步长</th><th>反弹买入</th><th>回落卖出</th><th>每格金额</th><th>当前价格</th><th>上次成交日期</th><th>上次成交价</th><th>预计下次买入</th><th>预计下次卖出</th><th>买 / 卖次数</th><th>最多使用本金</th><th>盈亏金额</th><th>操作</th>
       </tr></thead>
       <tbody id="grid-body"></tbody>
     </table>
@@ -53,11 +53,12 @@ import { href } from '../../lib/url';
     type Candle, type GridParams, type GridResult, type SavedRecord,
   } from '../../lib/grid-trading';
 
-  type Row = GridParams & { id: number; candles?: Candle[] };
+  // 计算器以“初始数量”为输入，建仓金额 = 数量 × 初始买入价（initialAmount 随之同步，供保存与显示）。
+  type Row = GridParams & { id: number; initialShares: number; candles?: Candle[] };
 
   const body = document.querySelector('#grid-body') as HTMLTableSectionElement;
   const status = document.querySelector('#status') as HTMLElement;
-  const rows: Row[] = [{ id: Date.now(), name: '沪深300ETF', code: '510300', date: '2025-01-02', initialPrice: 3.809, initialAmount: 10000, step: 0.10, rebound: 0.02, pullback: 0.02, gridAmount: 1000 }];
+  const rows: Row[] = [{ id: Date.now(), name: '沪深300ETF', code: '510300', date: '2025-01-02', initialPrice: 3.809, initialShares: 2600, initialAmount: 2600 * 3.809, step: 0.10, rebound: 0.02, pullback: 0.02, gridAmount: 1000 }];
   const format = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const priceFormat = new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 
@@ -72,7 +73,7 @@ import { href } from '../../lib/url';
       <td class="stock-name">${row.name || '获取行情后自动填充'}</td>
       <td>${editable(row, 'date', 'date', row.date)}</td>
       <td>${editable(row, 'initialPrice', 'number', row.initialPrice)}</td>
-      <td>${editable(row, 'initialAmount', 'number', row.initialAmount)}</td>
+      <td>${editable(row, 'initialShares', 'number', row.initialShares)}</td>
       <td>${editable(row, 'step', 'number', row.step)}</td>
       <td>${editable(row, 'rebound', 'number', row.rebound)}</td>
       <td>${editable(row, 'pullback', 'number', row.pullback)}</td>
@@ -83,8 +84,8 @@ import { href } from '../../lib/url';
     rows.forEach(updateComputed);
   }
   function calculate(row: Row): GridResult | null {
-    if (!row.candles?.length || !row.initialPrice || !row.initialAmount || !row.gridAmount || !row.step) return null;
-    return calculateGrid(row, row.candles);
+    if (!row.candles?.length || !row.initialPrice || !row.initialShares || !row.gridAmount || !row.step) return null;
+    return calculateGrid({ ...row, initialAmount: row.initialShares * row.initialPrice }, row.candles);
   }
   function updateComputed(row: Row) {
     const tr = body.querySelector(`[data-row="${row.id}"]`) as HTMLTableRowElement | null;
@@ -129,7 +130,7 @@ import { href } from '../../lib/url';
     }
     const record: SavedRecord = {
       id: crypto.randomUUID(), savedAt: new Date().toISOString(),
-      row: { id: row.id, name: row.name, code: row.code, date: row.date, initialPrice: row.initialPrice, initialAmount: row.initialAmount, step: row.step, rebound: row.rebound, pullback: row.pullback, gridAmount: row.gridAmount }, result,
+      row: { id: row.id, name: row.name, code: row.code, date: row.date, initialPrice: row.initialPrice, initialShares: row.initialShares, initialAmount: row.initialShares * row.initialPrice, step: row.step, rebound: row.rebound, pullback: row.pullback, gridAmount: row.gridAmount }, result,
     };
     saveRecord(record);
     status.textContent = `${row.name || row.code} 已保存，可在“已保存标的”查看详情`;
@@ -208,6 +209,9 @@ import { href } from '../../lib/url';
   .grid-table .cell-input { box-sizing: border-box; display: inline-block; margin: 0 auto; width: 80px; height: 34px; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px 8px; background: #f8fafc; color: #0f172a; font: inherit; text-align: center; outline: none; transition: all .15s ease; }
   .grid-table .cell-input:hover { border-color: #cbd5e1; background: #fff; }
   .grid-table .cell-input:focus { border-color: #0284c7; background: #fff; box-shadow: 0 0 0 2px rgba(2, 132, 199, .15); }
+  /* 数字输入框不显示上下调整箭头，直接输入即可。 */
+  .grid-table .cell-input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+  .grid-table .cell-input[type=number]::-webkit-inner-spin-button, .grid-table .cell-input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   .grid-table .cell-input[type=date] { width: 134px; text-align: center; }
   .grid-table .cell-input[type=date]::-webkit-date-and-time-value { text-align: center; }
   .grid-table .cell-input[type=text] { width: 88px; text-align: center; }

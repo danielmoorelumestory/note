@@ -10,7 +10,8 @@ export type Trade = {
 };
 export type EquityPoint = { date: string; current: number; positionValue: number; capitalUsed: number; pnl: number };
 export type GridParams = {
-  name: string; code: string; date: string; initialPrice: number; initialAmount: number;
+  // initialShares：建仓数量（新版计算器填写）。有数量时建仓金额 = 数量 × 价格；旧记录没有该字段，按 initialAmount 折算数量。
+  name: string; code: string; date: string; initialPrice: number; initialAmount: number; initialShares?: number;
   step: number; rebound: number; pullback: number; gridAmount: number;
 };
 export type GridResult = {
@@ -256,7 +257,10 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
     const amount = pick(adjustments.amount, date);
     return amount === undefined ? { amount: modelQuantity * price, quantity: modelQuantity } : { amount, quantity: amount / price, modelAmount: modelQuantity * modelPrice };
   };
-  const opening = fillPrice(row.date, row.initialPrice), openingFill = fillAmount(row.date, row.initialAmount, opening.price), openingAmount = openingFill.amount;
+  const opening = fillPrice(row.date, row.initialPrice);
+  // 建仓：有初始数量时按“数量 × 价格”算金额（只修正价格时数量不变）；旧记录按初始金额折算数量。
+  const openingFill = row.initialShares !== undefined ? fillLot(row.date, row.initialShares, row.initialPrice, opening.price) : fillAmount(row.date, row.initialAmount, opening.price);
+  const openingAmount = openingFill.amount;
   const openingFee = commission(row.code, openingAmount);
   let cash = -openingFee, shares = openingFill.quantity, cost = openingAmount + openingFee, capitalUsed = openingAmount, maxCapital = capitalUsed;
   let lastTrade = opening.price, lastTradeDate = row.date, realized = 0, buys = 0, sells = 0;
@@ -328,7 +332,7 @@ export function createBackup(record: SavedRecord): Backup {
     price: result.current, pnl: result.pnl, holding: holdingValue(result), position: result.position ?? 0,
     capital: last?.capitalUsed ?? 0, maxCapital: result.maxCapital, buys: result.buys, sells: result.sells,
     lastTrade: result.lastTrade, lastTradeDate: result.lastTradeDate, rules: RULES_VERSION,
-    row: { name: row.name, code: row.code, date: row.date, initialPrice: row.initialPrice, initialAmount: row.initialAmount, step: row.step, rebound: row.rebound, pullback: row.pullback, gridAmount: row.gridAmount },
+    row: { name: row.name, code: row.code, date: row.date, initialPrice: row.initialPrice, initialAmount: row.initialAmount, initialShares: row.initialShares, step: row.step, rebound: row.rebound, pullback: row.pullback, gridAmount: row.gridAmount },
     priceOverrides: record.priceOverrides, amountOverrides: record.amountOverrides, sharesOverrides: record.sharesOverrides, paramHistory: record.paramHistory,
     manualTrades: record.manualTrades, removedTrades: record.removedTrades,
   };
