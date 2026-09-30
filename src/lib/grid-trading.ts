@@ -596,3 +596,59 @@ export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nex
   hitArea.addEventListener('pointermove', event => showPoint(event as PointerEvent));
   hitArea.addEventListener('pointerleave', () => crosshair.setAttribute('visibility', 'hidden'));
 }
+
+// ---------- 备份对比曲线 ----------
+
+export type CompareMetric = 'pnl' | 'positionValue' | 'capitalUsed';
+
+/**
+ * 备份视图的对比曲线：同一指标下，纯网格续跑（实线）与当前数据含手动微调（虚线）两条走势，
+ * 带备份点竖线；悬停时显示两者的值和差额（当前 − 纯网格）。
+ */
+export function renderCompareChart(svg: SVGSVGElement, pure: EquityPoint[], live: EquityPoint[], metric: CompareMetric, marker?: { date: string; label: string }) {
+  if (!pure.length) { svg.innerHTML = '<text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">暂无数据</text>'; return; }
+  const liveByDate = new Map(live.map(point => [point.date, point]));
+  const pureValues = pure.map(point => point[metric]), liveValues = pure.map(point => (liveByDate.get(point.date) ?? point)[metric]);
+  const all = [...pureValues, ...liveValues];
+  // 总盈亏始终包含 0 轴；持仓市值、占用本金按数据范围缩放，避免走势被压扁。
+  const lo = metric === 'pnl' ? Math.min(0, ...all) : Math.min(...all), hi = metric === 'pnl' ? Math.max(0, ...all) : Math.max(...all);
+  const span = hi - lo || Math.max(Math.abs(hi) * .02, 1), yMin = lo - span * .08, yMax = hi + span * .08;
+  const width = 920, height = 300, left = 62, right = 24, top = 18, bottom = 38, chartWidth = width - left - right, chartHeight = height - top - bottom;
+  const x = (index: number) => left + index / Math.max(1, pure.length - 1) * chartWidth;
+  const y = (value: number) => top + (yMax - value) / (yMax - yMin) * chartHeight;
+  const label = (value: number) => yMax - yMin < 20000 ? Math.round(value).toLocaleString('zh-CN') : `${(value / 10000).toFixed(1)}万`;
+  const path = (values: number[]) => values.map((value, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${y(value).toFixed(1)}`).join('');
+  const grid = Array.from({ length: 5 }, (_, index) => { const value = yMin + (yMax - yMin) * index / 4, yy = y(value); return `<line x1="${left}" x2="${width - right}" y1="${yy}" y2="${yy}" stroke="#e2e8f0"/><text x="${left - 8}" y="${yy + 4}" text-anchor="end" fill="#94a3b8" font-size="10">${label(value)}</text>`; }).join('');
+  const zero = lo < 0 && hi > 0 ? `<line x1="${left}" x2="${width - right}" y1="${y(0)}" y2="${y(0)}" stroke="#475569" stroke-width="1.5" stroke-dasharray="6 4"/>` : '';
+  const labels = [0, Math.floor((pure.length - 1) / 2), pure.length - 1].map(index => `<text x="${x(index)}" y="${height - 12}" text-anchor="middle" fill="#94a3b8" font-size="10">${pure[index].date}</text>`).join('');
+  const markerIndex = marker ? pure.findIndex(point => point.date >= marker.date) : -1;
+  const markerSvg = marker && markerIndex >= 0
+    ? `<line x1="${x(markerIndex)}" x2="${x(markerIndex)}" y1="${top}" y2="${height - bottom}" stroke="#0369a1" stroke-width="1.2" stroke-dasharray="4 3"/><text x="${x(markerIndex) + (markerIndex > pure.length * .8 ? -5 : 5)}" y="${top + 10}" text-anchor="${markerIndex > pure.length * .8 ? 'end' : 'start'}" fill="#0369a1" font-size="10" font-weight="700">${marker.label}</text>` : '';
+  const format = metric === 'pnl' ? formatMoney : (value: number) => `¥${formatAmount(value)}`;
+  const tipLines = ['date', 'pure', 'live', 'diff'];
+  svg.innerHTML = `<g>${grid}${zero}${markerSvg}</g>`
+    + `<path d="${path(pureValues)}" fill="none" stroke="#2563eb" stroke-width="1.8"/><path d="${path(liveValues)}" fill="none" stroke="#ea580c" stroke-width="1.8" stroke-dasharray="6 3"/>${labels}`
+    + `<g class="cmp-crosshair" visibility="hidden" pointer-events="none"><line class="cmp-v" y1="${top}" y2="${height - bottom}" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3"/>`
+    + `<circle class="cmp-dot-pure" r="4" fill="#2563eb" stroke="#fff" stroke-width="2"/><circle class="cmp-dot-live" r="4" fill="#ea580c" stroke="#fff" stroke-width="2"/>`
+    + `<g class="cmp-tip"><rect fill="#0f172a" fill-opacity=".94" rx="6"/>${tipLines.map((name, index) => `<text class="cmp-${name}" x="10" y="${17 + index * 18}" fill="#f8fafc" font-size="10"${index ? '' : ' font-weight="700"'}/>`).join('')}</g></g>`
+    + `<rect class="cmp-hit" x="${left}" y="${top}" width="${chartWidth}" height="${chartHeight}" fill="transparent" style="cursor:crosshair"/>`;
+  const crosshair = svg.querySelector('.cmp-crosshair') as SVGGElement, tip = svg.querySelector('.cmp-tip') as SVGGElement;
+  const set = (selector: string, attrs: Record<string, number | string>) => { const el = svg.querySelector(selector)!; for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, String(value)); };
+  const setText = (name: string, text: string) => { tip.querySelector(`.cmp-${name}`)!.textContent = text; };
+  const hit = svg.querySelector('.cmp-hit')!;
+  hit.addEventListener('pointermove', event => {
+    const bounds = svg.getBoundingClientRect(), e = event as PointerEvent;
+    const pointerX = (e.clientX - bounds.left) * width / bounds.width, pointerY = (e.clientY - bounds.top) * height / bounds.height;
+    const index = Math.max(0, Math.min(pure.length - 1, Math.round((pointerX - left) / chartWidth * (pure.length - 1))));
+    const xx = x(index), a = pureValues[index], b = liveValues[index];
+    set('.cmp-v', { x1: xx, x2: xx });
+    set('.cmp-dot-pure', { cx: xx, cy: y(a) }); set('.cmp-dot-live', { cx: xx, cy: y(b) });
+    setText('date', pure[index].date + (marker && pure[index].date > marker.date ? '（备份后）' : ''));
+    setText('pure', `纯网格  ${format(a)}`); setText('live', `当前    ${format(b)}`); setText('diff', `差额    ${metric === 'pnl' ? formatMoney(b - a) : `${b - a >= 0 ? '+' : '-'}¥${formatAmount(Math.abs(b - a))}`}`);
+    const tipWidth = 200, tipHeight = 18 * tipLines.length + 8;
+    tip.setAttribute('transform', `translate(${xx > width - right - tipWidth - 12 ? xx - tipWidth - 12 : xx + 12},${Math.max(top, Math.min(height - bottom - tipHeight, pointerY - tipHeight / 2))})`);
+    set('.cmp-tip rect', { width: tipWidth, height: tipHeight });
+    crosshair.setAttribute('visibility', 'visible');
+  });
+  hit.addEventListener('pointerleave', () => crosshair.setAttribute('visibility', 'hidden'));
+}

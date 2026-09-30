@@ -9,17 +9,25 @@ const savedUrl = href('lab/grid-trading/saved');
   <header class="hero compact-hero"><p class="kicker">BACKTEST DETAIL</p><h1 id="title">回测详情</h1><p id="subtitle" class="lede">正在读取已保存记录…</p></header>
   <a class="back" id="back-link" href={savedUrl}>← 返回已保存标的</a>
   <section id="stats" class="stats"></section>
+  <section class="chart-panel">
+    <div class="chart-head"><div><h2>资金与收盘价变化曲线</h2><p>当前标的的历史回测数据；收盘价及预计买卖价使用右侧刻度</p></div><div class="legend"><span class="line position"></span>持仓市值 <span class="line capital"></span>占用本金 <span class="line profit"></span>总盈亏 <span class="line close"></span>收盘价 <span class="line buy-level"></span>预计买入 <span class="line sell-level"></span>预计卖出</div></div>
+    <div class="chart-scroll"><svg id="equity-chart" viewBox="0 0 920 300" role="img" aria-label="当前标的的资金与收盘价变化曲线"><text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">读取已保存回测数据后显示曲线</text></svg></div>
+  </section>
   <section class="backup-panel" aria-label="备份对比">
     <div class="backup-head">
-      <div><h2>备份对比</h2><p>备份当前数据作为基准点。之后你手动微调买卖点（改成交、增删记录、改参数），这里会对比“从备份点起完全按网格买卖”与“你现在的实际数据”的收益差别。</p></div>
+      <div><h2>备份对比</h2><p id="backup-desc">备份当前数据作为基准点。之后你手动微调买卖点（改成交、增删记录、改参数），这里会对比“从备份点起完全按网格买卖”与“你现在的实际数据”的收益差别。</p></div>
       <div class="backup-actions"><select id="backup-select" hidden aria-label="选择备份"></select><a id="backup-view" class="tool-link" hidden>查看备份详情 →</a><button id="backup-delete" class="tool-link" type="button" hidden>删除此备份</button><button id="backup-now" class="tool-button" type="button" disabled>备份当前数据</button></div>
     </div>
     <p id="backup-empty" class="backup-empty">还没有备份。点击右上角“备份当前数据”，以当前状态为起点开始对比。</p>
     <div id="backup-compare" class="backup-compare"></div>
-  </section>
-  <section class="chart-panel">
-    <div class="chart-head"><div><h2>资金与收盘价变化曲线</h2><p>当前标的的历史回测数据；收盘价及预计买卖价使用右侧刻度</p></div><div class="legend"><span class="line position"></span>持仓市值 <span class="line capital"></span>占用本金 <span class="line profit"></span>总盈亏 <span class="line close"></span>收盘价 <span class="line buy-level"></span>预计买入 <span class="line sell-level"></span>预计卖出</div></div>
-    <div class="chart-scroll"><svg id="equity-chart" viewBox="0 0 920 300" role="img" aria-label="当前标的的资金与收盘价变化曲线"><text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">读取已保存回测数据后显示曲线</text></svg></div>
+    <div id="compare-chart-block" class="compare-chart-block" hidden>
+      <div class="chart-head">
+        <div><h3>对比曲线</h3><p>同一指标下，纯网格续跑与当前数据（含手动微调）的走势对比；虚线竖线为备份点，悬停可查看两者的值和差额。</p></div>
+        <div class="metric-tabs" role="tablist" aria-label="对比指标"><button type="button" class="active" data-metric="pnl">总盈亏</button><button type="button" data-metric="positionValue">持仓市值</button><button type="button" data-metric="capitalUsed">占用本金</button></div>
+      </div>
+      <div class="legend"><span class="line pure"></span>纯网格续跑（本备份，含备份视图中的成交修正）<span class="line live"></span>当前数据（含手动微调）</div>
+      <div class="chart-scroll"><svg id="compare-chart" viewBox="0 0 920 300" role="img" aria-label="备份与当前数据对比曲线"></svg></div>
+    </div>
   </section>
   <section class="history"><h2>历史成交</h2><p id="history-hint">成交价格、成交金额、成交份额可直接修改为真实成交值（如按 100 份整数倍成交），修改份额时金额按“份额 × 成交价”计算；修改后该笔及之后的持仓、盈亏、网格价位会重新计算，并自动同步到云端。持仓市值按该笔成交价估值；“当时占用本金”仅统计成交金额，不含手续费，其最高值与回测摘要中的“最多使用本金”一致。最新成交在最上方。</p>
     <p id="history-hint2">可添加或删除成交记录（建仓不可删除）：添加时填写日期、方向、成交价格和成交份额，其余数据自动计算并按日期排入列表。增删只影响总盈亏、持仓和占用本金，不改动其他成交行；只有最上面（最新）的一条变化时，才会改变下一格买卖价的基准。</p>
@@ -40,8 +48,8 @@ const savedUrl = href('lab/grid-trading/saved');
 <script>
   import {
     calculateGrid, adjustmentsOf, getCandles, fetchQuotes, mergeQuote, refreshRecord, readRecords, saveRecord, pushRecord,
-    renderEquityChart, holdingValue, openingOf, createBackup, replayBackup, refreshBackupSnapshot, formatMoney, formatAmount, formatPercent, tick,
-    type SavedRecord, type Trade, type Adjustments, type GridResult, type Backup,
+    renderEquityChart, renderCompareChart, holdingValue, openingOf, createBackup, replayBackup, refreshBackupSnapshot, formatMoney, formatAmount, formatPercent, tick,
+    type SavedRecord, type Trade, type Adjustments, type GridResult, type Backup, type CompareMetric, type EquityPoint,
   } from '../../../lib/grid-trading';
 
   type AdjustField = 'price' | 'amount' | 'shares';
@@ -49,6 +57,13 @@ const savedUrl = href('lab/grid-trading/saved');
   // 备份视图：详情页加 backup 参数即进入只读的备份视图，展示备份时的数据以及备份日之后完全按网格买卖的走向。
   const backupParam = new URLSearchParams(location.search).get('backup');
   let viewBackup: Backup | undefined;
+  // 对比曲线：live 为当前数据（含手动微调）的逐日曲线，pure 为备份视图的纯网格续跑曲线。
+  let liveSeries: EquityPoint[] = [], pureSeries: EquityPoint[] = [], compareMetric: CompareMetric = 'pnl', compareBackup: Backup | undefined;
+  let viewLiveResult: GridResult | undefined;
+  function drawCompare() {
+    if (!compareBackup) return;
+    renderCompareChart(document.querySelector('#compare-chart') as SVGSVGElement, pureSeries, liveSeries, compareMetric, { date: compareBackup.date, label: '备份点' });
+  }
   const backupLabelOf = (backup: { at: string }) => new Date(backup.at).toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 16);
   const subtitle = document.querySelector('#subtitle') as HTMLElement;
   const price = (v?: number) => typeof v === 'number' && Number.isFinite(v) ? `¥${v.toFixed(3)}` : '—';
@@ -117,13 +132,43 @@ const savedUrl = href('lab/grid-trading/saved');
   const backupLabel = (backup: { at: string; price: number; pnl: number }) =>
     `${new Date(backup.at).toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).slice(0, 16)} · 价格 ${backup.price.toFixed(3)} · 总盈亏 ${formatMoney(backup.pnl)}`;
 
+  // 备份对比：摘要 + 对比表 + 对比曲线。当前详情页（备份 vs 当前）与备份视图共用同一个渲染。
+  function showComparison(backup: Backup, pure: GridResult, live: GridResult) {
+    const rateOf = (extra: number) => backup.capital > 0 ? extra / backup.capital : undefined;
+    const totalRateOf = (pnl: number, maxCapital: number) => maxCapital > 0 ? pnl / maxCapital : undefined;
+    const pureExtra = pure.pnl - backup.pnl, liveExtra = live.pnl - backup.pnl;
+    const pct = (value?: number) => value === undefined ? '—' : formatPercent(value);
+    const tone = (value: number) => `class="${value >= 0 ? 'up' : 'down'}"`;
+    const diffMoney = (value: number) => `<span ${tone(value)}>${formatMoney(value)}</span>`;
+    const diffPct = (value?: number) => value === undefined ? '—' : `<span ${tone(value)}>${formatPercent(value)}</span>`;
+    const minus = (a?: number, b?: number) => a === undefined || b === undefined ? undefined : a - b;
+    const shares = (value?: number) => value === undefined ? '—' : Number(value.toFixed(2)).toLocaleString('zh-CN');
+    const rows: [string, string, string, string, string][] = [
+      ['总盈亏', formatMoney(backup.pnl), formatMoney(pure.pnl), formatMoney(live.pnl), diffMoney(live.pnl - pure.pnl)],
+      ['备份后新增盈亏', '—', formatMoney(pureExtra), formatMoney(liveExtra), diffMoney(liveExtra - pureExtra)],
+      ['备份后收益率<small>新增盈亏 ÷ 备份时占用本金</small>', '—', pct(rateOf(pureExtra)), pct(rateOf(liveExtra)), diffPct(minus(rateOf(liveExtra), rateOf(pureExtra)))],
+      ['总收益率<small>总盈亏 ÷ 最多使用本金</small>', pct(totalRateOf(backup.pnl, backup.maxCapital)), pct(totalRateOf(pure.pnl, pure.maxCapital)), pct(totalRateOf(live.pnl, live.maxCapital)), diffPct(minus(totalRateOf(live.pnl, live.maxCapital), totalRateOf(pure.pnl, pure.maxCapital)))],
+      ['备份后 买入 / 卖出', '—', `${pure.buys - backup.buys} / ${pure.sells - backup.sells}`, `${live.buys - backup.buys} / ${live.sells - backup.sells}`, ''],
+      ['当前持仓份额', shares(backup.position), shares(pure.position), shares(live.position), ''],
+    ];
+    const gain = live.pnl - pure.pnl;
+    const summary = Math.abs(gain) < 0.005 ? '目前与纯网格没有差别。'
+      : `备份以来，手动微调比纯网格<b ${tone(gain)}>${gain >= 0 ? '多赚' : '少赚'} ¥${formatAmount(Math.abs(gain))}</b>${rateOf(liveExtra) !== undefined && rateOf(pureExtra) !== undefined ? `，收益率相差 ${((rateOf(liveExtra)! - rateOf(pureExtra)!) * 100).toFixed(2)} 个百分点` : ''}。`;
+    (document.querySelector('#backup-compare') as HTMLElement).innerHTML = `<p class="backup-summary">备份日 ${backup.date} · 备份时价格 ¥${backup.price.toFixed(3)} · 最新价 ¥${live.current.toFixed(3)}　${summary}</p>
+      <div class="table-shell"><table class="compare-table"><thead><tr><th></th><th>备份时</th><th>纯网格续跑</th><th>当前（含手动微调）</th><th>差额（当前 − 纯网格）</th></tr></thead><tbody>${rows.map(([name, a, b, c, d]) => `<tr><td>${name}</td><td>${a}</td><td>${b}</td><td>${c}</td><td>${d}</td></tr>`).join('')}</tbody></table></div>`;
+    compareBackup = backup; pureSeries = pure.series; liveSeries = live.series;
+    (document.querySelector('#compare-chart-block') as HTMLElement).hidden = false;
+    drawCompare();
+  }
+
   async function renderBackups(item: SavedRecord) {
     const run = ++backupRun, backups = item.backups ?? [];
     const select = document.querySelector('#backup-select') as HTMLSelectElement, compare = document.querySelector('#backup-compare') as HTMLElement;
     (document.querySelector('#backup-empty') as HTMLElement).hidden = backups.length > 0;
     const viewLink = document.querySelector('#backup-view') as HTMLAnchorElement;
     (document.querySelector('#backup-delete') as HTMLElement).hidden = select.hidden = viewLink.hidden = !backups.length;
-    if (!backups.length) { compare.innerHTML = ''; return; }
+    const chartBlock = document.querySelector('#compare-chart-block') as HTMLElement;
+    if (!backups.length) { compare.innerHTML = ''; chartBlock.hidden = true; return; }
     const backup = backups.find(entry => entry.id === selectedBackupId) ?? backups[0];
     selectedBackupId = backup.id;
     const viewUrl = new URL(location.href); viewUrl.searchParams.set('backup', backup.id);
@@ -134,31 +179,9 @@ const savedUrl = href('lab/grid-trading/saved');
       // 纯网格：用备份时冻结的输入在最新行情上续跑，备份日之后完全按网格买卖，不含之后的任何手动微调。
       const pure = replayBackup(backup, await loadCandles(item));
       if (run !== backupRun) return; // 已有更新的渲染，丢弃过期结果
-      const live = item.result;
-      const rateOf = (extra: number) => backup.capital > 0 ? extra / backup.capital : undefined;
-      const totalRateOf = (pnl: number, maxCapital: number) => maxCapital > 0 ? pnl / maxCapital : undefined;
-      const pureExtra = pure.pnl - backup.pnl, liveExtra = live.pnl - backup.pnl;
-      const pct = (value?: number) => value === undefined ? '—' : formatPercent(value);
-      const tone = (value: number) => `class="${value >= 0 ? 'up' : 'down'}"`;
-      const diffMoney = (value: number) => `<span ${tone(value)}>${formatMoney(value)}</span>`;
-      const diffPct = (value?: number) => value === undefined ? '—' : `<span ${tone(value)}>${formatPercent(value)}</span>`;
-      const minus = (a?: number, b?: number) => a === undefined || b === undefined ? undefined : a - b;
-      const shares = (value?: number) => value === undefined ? '—' : Number(value.toFixed(2)).toLocaleString('zh-CN');
-      const rows: [string, string, string, string, string][] = [
-        ['总盈亏', formatMoney(backup.pnl), formatMoney(pure.pnl), formatMoney(live.pnl), diffMoney(live.pnl - pure.pnl)],
-        ['备份后新增盈亏', '—', formatMoney(pureExtra), formatMoney(liveExtra), diffMoney(liveExtra - pureExtra)],
-        ['备份后收益率<small>新增盈亏 ÷ 备份时占用本金</small>', '—', pct(rateOf(pureExtra)), pct(rateOf(liveExtra)), diffPct(minus(rateOf(liveExtra), rateOf(pureExtra)))],
-        ['总收益率<small>总盈亏 ÷ 最多使用本金</small>', pct(totalRateOf(backup.pnl, backup.maxCapital)), pct(totalRateOf(pure.pnl, pure.maxCapital)), pct(totalRateOf(live.pnl, live.maxCapital)), diffPct(minus(totalRateOf(live.pnl, live.maxCapital), totalRateOf(pure.pnl, pure.maxCapital)))],
-        ['备份后 买入 / 卖出', '—', `${pure.buys - backup.buys} / ${pure.sells - backup.sells}`, `${live.buys - backup.buys} / ${live.sells - backup.sells}`, ''],
-        ['当前持仓份额', shares(backup.position), shares(pure.position), shares(live.position), ''],
-      ];
-      const gain = live.pnl - pure.pnl;
-      const summary = Math.abs(gain) < 0.005 ? '目前与纯网格没有差别。'
-        : `备份以来，手动微调比纯网格<b ${tone(gain)}>${gain >= 0 ? '多赚' : '少赚'} ¥${formatAmount(Math.abs(gain))}</b>${rateOf(liveExtra) !== undefined && rateOf(pureExtra) !== undefined ? `，收益率相差 ${((rateOf(liveExtra)! - rateOf(pureExtra)!) * 100).toFixed(2)} 个百分点` : ''}。`;
-      compare.innerHTML = `<p class="backup-summary">备份日 ${backup.date} · 备份时价格 ¥${backup.price.toFixed(3)} · 最新价 ¥${live.current.toFixed(3)}　${summary}</p>
-        <div class="table-shell"><table class="compare-table"><thead><tr><th></th><th>备份时</th><th>纯网格续跑</th><th>当前（含手动微调）</th><th>差额（当前 − 纯网格）</th></tr></thead><tbody>${rows.map(([name, a, b, c, d]) => `<tr><td>${name}</td><td>${a}</td><td>${b}</td><td>${c}</td><td>${d}</td></tr>`).join('')}</tbody></table></div>`;
+      showComparison(backup, pure, item.result);
     } catch {
-      if (run === backupRun) compare.innerHTML = '<p class="backup-empty">行情获取失败，暂时无法对比。</p>';
+      if (run === backupRun) { compare.innerHTML = '<p class="backup-empty">行情获取失败，暂时无法对比。</p>'; chartBlock.hidden = true; }
     }
   }
 
@@ -265,6 +288,7 @@ const savedUrl = href('lab/grid-trading/saved');
     viewBackup = next;
     saveRecord(record);
     render(backupRecordOf(record, next, result));
+    if (viewLiveResult) showComparison(next, result, viewLiveResult);
     showNote('正在同步到云端…');
     showNote(await pushRecord(record));
   }
@@ -380,9 +404,21 @@ const savedUrl = href('lab/grid-trading/saved');
     bindEditing();
     try {
       const candles = cachedBackupCandles = await loadCandles(backup);
-      render(backupRecordOf(source, backup, replayBackup(backup, candles)));
+      const result = replayBackup(backup, candles);
+      render(backupRecordOf(source, backup, result));
+      // 当前数据：与详情页相同的计算（含手动增删、修正与参数变更），用于和纯网格续跑对比。
+      viewLiveResult = calculateGrid(source.row, candles, adjustmentsOf(source));
+      (document.querySelector('#backup-desc') as HTMLElement).textContent = '以下为本备份与当前数据的对比（只读），内容与当前详情页的“备份对比”一致。';
+      showComparison(backup, result, viewLiveResult);
     } catch { subtitle.textContent = '行情获取失败，暂时无法展示备份走向，请稍后重试。'; }
   }
+
+  // 对比曲线的指标切换（当前详情页与备份视图共用）。
+  document.querySelectorAll('.metric-tabs button').forEach(button => button.addEventListener('click', () => {
+    compareMetric = (button as HTMLElement).dataset.metric as CompareMetric;
+    document.querySelectorAll('.metric-tabs button').forEach(item => item.classList.toggle('active', item === button));
+    drawCompare();
+  }));
 
   if (!record) {
     document.querySelector('#title')!.textContent = '未找到保存记录';
@@ -462,12 +498,22 @@ const savedUrl = href('lab/grid-trading/saved');
   .detail-table .confirm-edit:disabled { opacity: .6; cursor: wait; }
   .detail-table .confirm-edit[hidden] { display: none; }
   .detail-table .down { color: #16a34a; font-weight: 600; }
+  .compare-chart-block { margin-top: 16px; padding-top: 14px; border-top: 1px solid #f1f5f9; }
+  .compare-chart-block[hidden] { display: none; }
+  .compare-chart-block h3 { margin: 0 0 3px; color: #1e293b; font-size: 14px; }
+  .metric-tabs { display: flex; flex: none; gap: 4px; padding: 3px; border-radius: 8px; background: #f1f5f9; }
+  .metric-tabs button { border: 0; border-radius: 6px; padding: 4px 11px; background: transparent; color: #64748b; font-size: 12px; font-weight: 500; cursor: pointer; }
+  .metric-tabs button:hover { color: #0f172a; }
+  .metric-tabs button.active { background: #fff; color: #0369a1; font-weight: 700; box-shadow: 0 1px 2px rgb(15 23 42 / .08); }
+  .legend { margin-bottom: 4px; }
+  .line.pure { background: #2563eb; height: 2px; }
+  .line.live { height: 0; border-top: 2px dashed #ea580c; margin-left: 14px; }
   .view-badge { margin-left: 10px; padding: 2px 9px; border-radius: 5px; background: #e0f2fe; color: #0369a1; font-size: 13px; font-weight: 700; vertical-align: 4px; }
-  .backup-view .backup-panel, .backup-view .trade-tools, .backup-view .trade-form { display: none; }
+  .backup-view .backup-actions, .backup-view #backup-empty, .backup-view .trade-tools, .backup-view .trade-form { display: none; }
   .backup-view .detail-table th:last-child, .backup-view .detail-table td:last-child { display: none; }
   .detail-table .after-tag { margin-left: 5px; padding: 1px 5px; border-radius: 3px; background: #e0f2fe; color: #0369a1; font-size: 10px; font-style: normal; font-weight: 600; vertical-align: 1px; }
   .detail-table .after-row { background: #f5faff; }
-  .backup-panel { margin: 0 0 28px; padding: 16px 18px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+  .backup-panel { margin: 28px 0; padding: 16px 18px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
   .backup-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
   .backup-head h2 { margin: 0 0 3px; color: #1e293b; font-size: 16px; }
   .backup-head p { margin: 0; color: #94a3b8; font-size: 12px; line-height: 1.6; }
