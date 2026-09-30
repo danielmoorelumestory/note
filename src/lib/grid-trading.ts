@@ -30,11 +30,26 @@ export type ParamStage = { until: string; step: number; rebound: number; pullbac
 export type ManualTrade = { id: string; date: string; side: '买入' | '卖出'; price: number; shares: number };
 // manual：手动添加的成交；removed：被删除的网格成交（按成交日期，建仓不可删除）。
 // 手动增删只叠加到总盈亏、持仓和占用本金上，不改动已有成交行的数据。
-export type Adjustments = { price?: Overrides; amount?: Overrides; shares?: Overrides; params?: ParamStage[]; manual?: ManualTrade[]; removed?: string[] };
+// anchor：备份对比用的“续跑锚点”——备份日之后的第一个交易日，上次成交价重置为 price（备份时列表最上面一条的价格），
+// 使纯网格续跑真正从备份点出发。
+export type Adjustments = { price?: Overrides; amount?: Overrides; shares?: Overrides; params?: ParamStage[]; manual?: ManualTrade[]; removed?: string[]; anchor?: { after: string; price: number } };
+
+// 备份：冻结备份时刻的全部输入（参数、修正、手动增删、参数历史）和关键结果。
+// 之后可用冻结的输入在最新行情上“纯网格续跑”，与当前（含手动微调）的实际数据对比收益。
+export type Backup = {
+  id: string; at: string;
+  date: string; // 备份时最新交易日
+  price: number; pnl: number; holding: number; position: number; capital: number; maxCapital: number;
+  buys: number; sells: number; lastTrade: number; lastTradeDate: string;
+  row: GridParams;
+  priceOverrides?: Overrides; amountOverrides?: Overrides; sharesOverrides?: Overrides; paramHistory?: ParamStage[];
+  manualTrades?: ManualTrade[]; removedTrades?: string[];
+};
 export type SavedRecord = {
   id: string; savedAt: string; updatedAt?: string;
   priceOverrides?: Overrides; amountOverrides?: Overrides; sharesOverrides?: Overrides; paramHistory?: ParamStage[];
   manualTrades?: ManualTrade[]; removedTrades?: string[];
+  backups?: Backup[];
   row: GridParams & { id?: number };
   // 旧版本保存的结果可能缺少部分字段，读取时需做兼容。
   result: GridResult;
@@ -230,6 +245,7 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
   const openingFee = commission(row.code, openingAmount);
   let cash = -openingFee, shares = openingFill.quantity, cost = openingAmount + openingFee, capitalUsed = openingAmount, maxCapital = capitalUsed;
   let lastTrade = opening.price, lastTradeDate = row.date, realized = 0, buys = 0, sells = 0;
+  let anchored = !adjustments.anchor;
   // 接口在非交易日会从下一交易日开始返回；该首个实际交易日视为建仓日，建仓当笔总盈亏按其收盘价结算。
   const openingCandle = candles.find(candle => candle.date >= row.date), openingDay = openingCandle?.date;
   const trades: Trade[] = [{ date: row.date, side: '建仓', ...opening, ...openingFill, shares, capitalUsed, pnl: cash + shares * (openingCandle?.close ?? opening.price) - openingAmount }];
@@ -261,6 +277,8 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
   for (const candle of candles) {
     // 建仓日只按建仓价建立初始仓位，不读取当日高低价，也不触发网格。
     if (candle.date !== openingDay) {
+      // 续跑锚点：备份日之后的第一个交易日起，以备份时最上面一条的价格为上次成交价。
+      if (!anchored && candle.date > adjustments.anchor!.after) { lastTrade = adjustments.anchor!.price; anchored = true; }
       const params = paramsAt(candle.date);
       const buyPrice = tick(lastTrade - params.step + params.rebound);
       const sellPrice = tick(lastTrade + params.step - params.pullback);
@@ -285,6 +303,43 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
  */
 export const holdingValue = (result: GridResult) =>
   typeof result.position === 'number' ? result.position * result.current : (result.series?.at(-1)?.positionValue ?? 0);
+
+/** 备份当前数据：冻结输入与关键结果，不含逐日曲线与成交明细（对比时用冻结的输入重新计算）。 */
+export function createBackup(record: SavedRecord): Backup {
+  const { result, row } = record, last = result.series?.at(-1);
+  return {
+    id: crypto.randomUUID(), at: new Date().toISOString(), date: last?.date ?? marketToday(),
+    price: result.current, pnl: result.pnl, holding: holdingValue(result), position: result.position ?? 0,
+    capital: last?.capitalUsed ?? 0, maxCapital: result.maxCapital, buys: result.buys, sells: result.sells,
+    lastTrade: result.lastTrade, lastTradeDate: result.lastTradeDate,
+    row: { name: row.name, code: row.code, date: row.date, initialPrice: row.initialPrice, initialAmount: row.initialAmount, step: row.step, rebound: row.rebound, pullback: row.pullback, gridAmount: row.gridAmount },
+    priceOverrides: record.priceOverrides, amountOverrides: record.amountOverrides, sharesOverrides: record.sharesOverrides, paramHistory: record.paramHistory,
+    manualTrades: record.manualTrades, removedTrades: record.removedTrades,
+  };
+}
+
+/** 纯网格续跑：用备份时冻结的输入在最新行情上重算，备份日之后完全按网格买卖（不含之后的手动微调），从备份时最上面一条的价格出发。 */
+export function replayBackup(backup: Backup, candles: Candle[]): GridResult {
+  return calculateGrid(backup.row, candles, { ...backupAdjustments(backup), anchor: { after: backup.date, price: backup.lastTrade } });
+}
+
+const backupAdjustments = (backup: Backup): Adjustments => ({
+  price: backup.priceOverrides, amount: backup.amountOverrides, shares: backup.sharesOverrides, params: backup.paramHistory,
+  manual: backup.manualTrades, removed: backup.removedTrades,
+});
+
+/**
+ * 备份日及之前的成交被修正后，按修正后的数据重算“备份时”的快照（总盈亏、持仓、占用本金、上次成交价等），
+ * 让对比表的“备份时”列与备份视图保持一致；上次成交价同时是纯网格续跑的起点。
+ */
+export function refreshBackupSnapshot(backup: Backup, candles: Candle[]): Backup {
+  const result = calculateGrid(backup.row, candles.filter(candle => candle.date <= backup.date), backupAdjustments(backup));
+  return {
+    ...backup, price: result.current, pnl: result.pnl, holding: holdingValue(result), position: result.position ?? 0,
+    capital: result.series.at(-1)?.capitalUsed ?? backup.capital, maxCapital: result.maxCapital, buys: result.buys, sells: result.sells,
+    lastTrade: result.lastTrade, lastTradeDate: result.lastTradeDate,
+  };
+}
 
 /** 建仓的实际价格与金额：详情页修正过建仓成交后以修正值为准，否则为创建时填写的设置值。 */
 export function openingOf(record: SavedRecord): { price: number; amount: number } {
@@ -479,7 +534,7 @@ export async function pushRecord(record: SavedRecord): Promise<string> {
 // ---------- 资金曲线 ----------
 
 /** 绘制持仓市值、占用本金（阶梯线）、总盈亏与收盘价曲线，带十字光标与提示框。 */
-export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nextBuy: number | undefined, nextSell: number | undefined, trades: Trade[] = []) {
+export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nextBuy: number | undefined, nextSell: number | undefined, trades: Trade[] = [], marker?: { date: string; label: string }) {
   if (!series.length || !Number.isFinite(nextBuy) || !Number.isFinite(nextSell)) { svg.innerHTML = '<text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">暂无完整曲线数据</text>'; return; }
   const buyLevel = nextBuy!, sellLevel = nextSell!;
   const width = 920, height = 300, left = 62, right = 54, top = 18, bottom = 38, chartWidth = width - left - right, chartHeight = height - top - bottom;
@@ -498,8 +553,12 @@ export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nex
   const labels = [0, Math.floor((series.length - 1) / 2), series.length - 1].map(index => `<text x="${x(index)}" y="${height - 12}" text-anchor="middle" fill="#94a3b8" font-size="10">${series[index].date}</text>`).join('');
   const zero = min < 0 ? `<line x1="${left}" x2="${width - right}" y1="${y(0)}" y2="${y(0)}" stroke="#475569" stroke-width="1.5" stroke-dasharray="6 4"/>` : '';
   const level = (value: number, color: string, label: string) => `<line x1="${left}" x2="${width - right}" y1="${priceY(value)}" y2="${priceY(value)}" stroke="${color}" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${width - right + 8}" y="${priceY(value) + 4}" fill="${color}" font-size="10">${label} ${value.toFixed(3)}</text>`;
+  // 备份点：在备份日画一条竖线并标注，便于区分备份时的数据与之后按网格续跑的走向。
+  const markerIndex = marker ? series.findIndex(point => point.date >= marker.date) : -1;
+  const markerSvg = marker && markerIndex >= 0
+    ? `<line x1="${x(markerIndex)}" x2="${x(markerIndex)}" y1="${top}" y2="${height - bottom}" stroke="#0369a1" stroke-width="1.2" stroke-dasharray="4 3"/><text x="${x(markerIndex) + (markerIndex > series.length * .8 ? -5 : 5)}" y="${top + 10}" text-anchor="${markerIndex > series.length * .8 ? 'end' : 'start'}" fill="#0369a1" font-size="10" font-weight="700">${marker.label}</text>` : '';
   const tipLines = ['date', 'trade', 'current', 'position', 'capital', 'profit'];
-  svg.innerHTML = `<g>${grid}${zero}${priceLabels}${level(buyLevel, '#16a34a', '买')}${level(sellLevel, '#ea580c', '卖')}</g>`
+  svg.innerHTML = `<g>${grid}${zero}${priceLabels}${level(buyLevel, '#16a34a', '买')}${level(sellLevel, '#ea580c', '卖')}${markerSvg}</g>`
     + `<path d="${path(point => point.positionValue)}" fill="none" stroke="#2563eb" stroke-width="1.5"/><path d="${capitalPath}" fill="none" stroke="#f59e0b" stroke-width="1.5"/><path d="${path(point => point.pnl)}" fill="none" stroke="#dc2626" stroke-width="1.5"/><path d="${path(point => point.current, priceY)}" fill="none" stroke="#7c3aed" stroke-width="1.5"/>${labels}`
     + `<g class="chart-crosshair" visibility="hidden" pointer-events="none"><line class="crosshair-v" y1="${top}" y2="${height - bottom}" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3"/><line class="crosshair-h" x1="${left}" x2="${width - right}" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3"/>`
     + ['position:#2563eb', 'capital:#f59e0b', 'profit:#dc2626', 'current:#7c3aed'].map(item => { const [name, color] = item.split(':'); return `<circle class="dot-${name}" r="4" fill="${color}" stroke="#fff" stroke-width="2"/>`; }).join('')
