@@ -10,7 +10,7 @@ const savedUrl = href('lab/grid-trading/saved');
   <a class="back" id="back-link" href={savedUrl}>← 返回已保存标的</a>
   <section id="stats" class="stats"></section>
   <section class="chart-panel">
-    <div class="chart-head"><div><h2>资金与收盘价变化曲线</h2><p>当前标的的历史回测数据；收盘价及预计买卖价使用右侧刻度</p></div><div class="legend"><span class="line position"></span>持仓市值 <span class="line capital"></span>占用本金 <span class="line profit"></span>总盈亏 <span class="line close"></span>收盘价 <span class="line buy-level"></span>预计买入 <span class="line sell-level"></span>预计卖出</div></div>
+    <div class="chart-head"><div><h2>资金与收盘价变化曲线</h2><p>当前标的的历史回测数据；上图价格、下图资金，共用同一条时间轴</p></div><div class="legend axis-legend"><div class="legend-row"><b class="axis-tag tag-price">上图 · 价格</b><span class="line close"></span>收盘价 <span class="line buy-level"></span>预计买入 <span class="line sell-level"></span>预计卖出</div><div class="legend-row"><b class="axis-tag tag-money">下图 · 资金</b><span class="line position"></span>持仓市值 <span class="line capital"></span>占用本金 <span class="line profit"></span>总盈亏</div></div></div>
     <div class="chart-scroll"><svg id="equity-chart" viewBox="0 0 920 300" role="img" aria-label="当前标的的资金与收盘价变化曲线"><text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">读取已保存回测数据后显示曲线</text></svg></div>
   </section>
   <section class="backup-panel" aria-label="备份对比">
@@ -481,7 +481,8 @@ const savedUrl = href('lab/grid-trading/saved');
   .table-shell::-webkit-scrollbar-track { background: transparent; }
   .table-shell::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 3px; }
   .table-shell::-webkit-scrollbar-thumb:hover { background-color: #94a3b8; }
-  .chart-panel { margin-top:28px; padding:18px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; }.chart-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:8px; }.chart-head h2 { margin:0 0 3px; color:#1e293b; font-size:16px; }.chart-head p { margin:0; color:#94a3b8; font-size:12px; }.legend { display:flex; flex-wrap:wrap; gap:7px; align-items:center; color:#64748b; font-size:12px; }.line { display:inline-block; width:14px; height:2px; margin-left:5px; }.line.position { background:#2563eb; }.line.capital { background:#f59e0b; }.line.profit { background:#dc2626; }.line.close { background:#7c3aed; }.line.buy-level { border-top:2px dashed #16a34a; }.line.sell-level { border-top:2px dashed #ea580c; }.chart-scroll { overflow-x:auto; }.chart-scroll svg { display:block; width:100%; min-width:680px; height:auto; }
+  .axis-legend { flex-direction: column; align-items: flex-end; gap: 6px; }.legend-row { display: flex; flex-wrap: nowrap; white-space: nowrap; align-items: center; justify-content: flex-end; gap: 7px; }.axis-tag { padding: 1px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }.axis-tag.tag-money { background: #f1f5f9; color: #334155; }.axis-tag.tag-price { background: #eef2ff; color: #4f46e5; }
+  .chart-panel { margin-top:28px; padding:18px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; }.chart-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:8px; }.chart-head h2 { margin:0 0 3px; color:#1e293b; font-size:16px; }.chart-head p { margin:0; color:#94a3b8; font-size:12px; }.legend { display:flex; flex-wrap:wrap; gap:7px; align-items:center; color:#64748b; font-size:12px; }.line { display:inline-block; width:14px; height:2px; margin-left:5px; }.line.position { background:#3b82f6; }.line.capital { background:#f59e0b; }.line.profit { background:#f43f5e; }.line.close { background:#6366f1; }.line.buy-level { border-top:1.5px dashed #10b981; background:none; height:0; }.line.sell-level { border-top:1.5px dashed #f97316; background:none; height:0; }.chart-scroll { overflow-x:auto; }.chart-scroll svg { display:block; width:100%; min-width:680px; height:auto; }
   @media(max-width:640px){.stats{grid-template-columns:repeat(2,1fr)}}
 </style>
 
@@ -525,8 +526,8 @@ const savedUrl = href('lab/grid-trading/saved');
   .metric-tabs button:hover { color: #0f172a; }
   .metric-tabs button.active { background: #fff; color: #0369a1; font-weight: 700; box-shadow: 0 1px 2px rgb(15 23 42 / .08); }
   .legend { margin-bottom: 4px; }
-  .line.pure { background: #2563eb; height: 2px; }
-  .line.live { height: 0; border-top: 2px dashed #ea580c; margin-left: 14px; }
+  .line.pure { background: #3b82f6; height: 1.5px; }
+  .line.live { height: 0; border-top: 1.5px dashed #f97316; margin-left: 14px; }
   .view-badge { margin-left: 10px; padding: 2px 9px; border-radius: 5px; background: #e0f2fe; color: #0369a1; font-size: 13px; font-weight: 700; vertical-align: 4px; }
   .backup-view .backup-actions, .backup-view #backup-empty, .backup-view .trade-tools, .backup-view .trade-form { display: none; }
   .backup-view .detail-table th:last-child, .backup-view .detail-table td:last-child { display: none; }

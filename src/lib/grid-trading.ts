@@ -558,37 +558,55 @@ export async function pushRecord(record: SavedRecord): Promise<string> {
 
 // ---------- 资金曲线 ----------
 
-/** 绘制持仓市值、占用本金（阶梯线）、总盈亏与收盘价曲线，带十字光标与提示框。 */
+/**
+ * 绘制走势图，分上下两张图并共用同一条时间轴：
+ * 上图“价格”（收盘价、预计买入/卖出价），下图“资金”（持仓市值、占用本金阶梯线、总盈亏）。
+ * 各自有边框、标题和纵轴，不再把两套刻度叠在一起；十字光标与备份点竖线同时穿过两张图。
+ */
 export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nextBuy: number | undefined, nextSell: number | undefined, trades: Trade[] = [], marker?: { date: string; label: string }) {
   if (!series.length || !Number.isFinite(nextBuy) || !Number.isFinite(nextSell)) { svg.innerHTML = '<text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">暂无完整曲线数据</text>'; return; }
   const buyLevel = nextBuy!, sellLevel = nextSell!;
-  const width = 920, height = 300, left = 62, right = 54, top = 18, bottom = 38, chartWidth = width - left - right, chartHeight = height - top - bottom;
+  const width = 920, left = 62, right = 70, chartWidth = width - left - right;
+  const priceTop = 30, priceHeight = 150, moneyTop = 218, moneyHeight = 150, plotBottom = moneyTop + moneyHeight, height = plotBottom + 30;
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  // 资金：始终包含 0 轴；价格：包含收盘价与预计买卖价。
   const values = series.flatMap(point => [point.positionValue, point.capitalUsed, point.pnl]);
   const min = Math.min(0, ...values), max = Math.max(...values), span = max - min || 1, yMin = min - span * .06, yMax = max + span * .06;
   const priceMinRaw = Math.min(...series.map(point => point.current), buyLevel), priceMaxRaw = Math.max(...series.map(point => point.current), sellLevel);
-  const priceSpan = priceMaxRaw - priceMinRaw || Math.max(priceMaxRaw * .02, .01), priceMin = priceMinRaw - priceSpan * .06, priceMax = priceMaxRaw + priceSpan * .06;
+  const priceSpan = priceMaxRaw - priceMinRaw || Math.max(priceMaxRaw * .02, .01), priceMin = priceMinRaw - priceSpan * .08, priceMax = priceMaxRaw + priceSpan * .08;
   const x = (index: number) => left + index / Math.max(1, series.length - 1) * chartWidth;
-  const y = (value: number) => top + (yMax - value) / (yMax - yMin) * chartHeight;
-  const priceY = (value: number) => top + (priceMax - value) / (priceMax - priceMin) * chartHeight;
+  const y = (value: number) => moneyTop + (yMax - value) / (yMax - yMin) * moneyHeight;
+  const priceY = (value: number) => priceTop + (priceMax - value) / (priceMax - priceMin) * priceHeight;
   const path = (valueOf: (point: EquityPoint) => number, scale = y) => series.map((point, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${scale(valueOf(point)).toFixed(1)}`).join('');
   // 占用本金只在成交日跳变：先沿上一日数值水平延伸，到成交日再竖直跳到新值（阶梯线）。
   const capitalPath = series.map((point, index) => index ? `H${x(index).toFixed(1)}V${y(point.capitalUsed).toFixed(1)}` : `M${x(0).toFixed(1)},${y(point.capitalUsed).toFixed(1)}`).join('');
-  const grid = Array.from({ length: 5 }, (_, index) => { const value = yMin + (yMax - yMin) * index / 4, yy = y(value); return `<line x1="${left}" x2="${width - right}" y1="${yy}" y2="${yy}" stroke="#e2e8f0"/><text x="${left - 8}" y="${yy + 4}" text-anchor="end" fill="#94a3b8" font-size="10">${(value / 10000).toFixed(1)}万</text>`; }).join('');
-  const priceLabels = Array.from({ length: 5 }, (_, index) => { const value = priceMin + (priceMax - priceMin) * index / 4; return `<text x="${width - right + 8}" y="${priceY(value) + 4}" fill="#64748b" font-size="10">${value.toFixed(3)}</text>`; }).join('');
-  const labels = [0, Math.floor((series.length - 1) / 2), series.length - 1].map(index => `<text x="${x(index)}" y="${height - 12}" text-anchor="middle" fill="#94a3b8" font-size="10">${series[index].date}</text>`).join('');
-  const zero = min < 0 ? `<line x1="${left}" x2="${width - right}" y1="${y(0)}" y2="${y(0)}" stroke="#475569" stroke-width="1.5" stroke-dasharray="6 4"/>` : '';
-  const level = (value: number, color: string, label: string) => `<line x1="${left}" x2="${width - right}" y1="${priceY(value)}" y2="${priceY(value)}" stroke="${color}" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${width - right + 8}" y="${priceY(value) + 4}" fill="${color}" font-size="10">${label} ${value.toFixed(3)}</text>`;
-  // 备份点：在备份日画一条竖线并标注，便于区分备份时的数据与之后按网格续跑的走向。
+  // 简约风格：不画方框，只留很淡的横向网格线和每张图的底线；标题与刻度统一用中性灰。
+  const frame = (top: number, h: number) => `<line x1="${left}" x2="${width - right}" y1="${top + h}" y2="${top + h}" stroke="#e2e8f0"/>`;
+  const title = (top: number, text: string, color: string) => `<text x="${left}" y="${top - 10}" fill="${color}" font-size="11" font-weight="600">${text}</text>`;
+  // skipY：与 0 轴太近的刻度标签不画，避免和“0”标签重叠。
+  const ticks = (lo: number, hi: number, top: number, h: number, format: (value: number) => string, color: string, skipY?: number) => Array.from({ length: 4 }, (_, index) => {
+    const value = lo + (hi - lo) * index / 3, yy = top + (hi - value) / (hi - lo) * h;
+    if (skipY !== undefined && Math.abs(yy - skipY) < 12) return `<line x1="${left}" x2="${width - right}" y1="${yy}" y2="${yy}" stroke="#f1f5f9"/>`;
+    return `<line x1="${left}" x2="${width - right}" y1="${yy}" y2="${yy}" stroke="#f1f5f9"/><text x="${left - 8}" y="${yy + 4}" text-anchor="end" fill="${color}" font-size="10">${format(value)}</text>`;
+  }).join('');
+  // 0 轴：实线、深色，并在纵轴上标出“0”，盈亏正负一目了然。
+  const zero = `<line x1="${left}" x2="${width - right}" y1="${y(0)}" y2="${y(0)}" stroke="#475569" stroke-width="1.3"/><text x="${left - 8}" y="${y(0) + 4}" text-anchor="end" fill="#334155" font-size="10" font-weight="700">0</text>`;
+  const level = (value: number, color: string, label: string) => `<line x1="${left}" x2="${width - right}" y1="${priceY(value)}" y2="${priceY(value)}" stroke="${color}" stroke-width="1" stroke-dasharray="4 3"/><text x="${width - right + 8}" y="${priceY(value) + 4}" fill="${color}" font-size="10" font-weight="500">${label} ${value.toFixed(3)}</text>`;
+  const labels = [0, Math.floor((series.length - 1) / 2), series.length - 1].map(index => `<text x="${x(index)}" y="${plotBottom + 18}" text-anchor="middle" fill="#94a3b8" font-size="10">${series[index].date}</text>`).join('');
+  // 备份点：在备份日画一条竖线（穿过两张图）并标注，便于区分备份时的数据与之后按网格续跑的走向。
   const markerIndex = marker ? series.findIndex(point => point.date >= marker.date) : -1;
   const markerSvg = marker && markerIndex >= 0
-    ? `<line x1="${x(markerIndex)}" x2="${x(markerIndex)}" y1="${top}" y2="${height - bottom}" stroke="#0369a1" stroke-width="1.2" stroke-dasharray="4 3"/><text x="${x(markerIndex) + (markerIndex > series.length * .8 ? -5 : 5)}" y="${top + 10}" text-anchor="${markerIndex > series.length * .8 ? 'end' : 'start'}" fill="#0369a1" font-size="10" font-weight="700">${marker.label}</text>` : '';
+    ? `<line x1="${x(markerIndex)}" x2="${x(markerIndex)}" y1="${priceTop}" y2="${plotBottom}" stroke="#0ea5e9" stroke-width="1" stroke-dasharray="4 3"/><text x="${x(markerIndex) + (markerIndex > series.length * .8 ? -5 : 5)}" y="${priceTop + 11}" text-anchor="${markerIndex > series.length * .8 ? 'end' : 'start'}" fill="#0ea5e9" font-size="10" font-weight="600">${marker.label}</text>` : '';
   const tipLines = ['date', 'trade', 'current', 'position', 'capital', 'profit'];
-  svg.innerHTML = `<g>${grid}${zero}${priceLabels}${level(buyLevel, '#16a34a', '买')}${level(sellLevel, '#ea580c', '卖')}${markerSvg}</g>`
-    + `<path d="${path(point => point.positionValue)}" fill="none" stroke="#2563eb" stroke-width="1.5"/><path d="${capitalPath}" fill="none" stroke="#f59e0b" stroke-width="1.5"/><path d="${path(point => point.pnl)}" fill="none" stroke="#dc2626" stroke-width="1.5"/><path d="${path(point => point.current, priceY)}" fill="none" stroke="#7c3aed" stroke-width="1.5"/>${labels}`
-    + `<g class="chart-crosshair" visibility="hidden" pointer-events="none"><line class="crosshair-v" y1="${top}" y2="${height - bottom}" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3"/><line class="crosshair-h" x1="${left}" x2="${width - right}" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3"/>`
-    + ['position:#2563eb', 'capital:#f59e0b', 'profit:#dc2626', 'current:#7c3aed'].map(item => { const [name, color] = item.split(':'); return `<circle class="dot-${name}" r="4" fill="${color}" stroke="#fff" stroke-width="2"/>`; }).join('')
-    + `<g class="chart-tooltip"><rect fill="#0f172a" fill-opacity=".94" rx="6"/>${tipLines.map((name, index) => `<text class="tip-${name}" x="10" y="${17 + index * 18}" fill="#f8fafc" font-size="10"${index ? '' : ' font-weight="700"'}/>`).join('')}</g></g>`
-    + `<rect class="chart-hit-area" x="${left}" y="${top}" width="${chartWidth}" height="${chartHeight}" fill="transparent" style="cursor:crosshair"/>`;
+  svg.innerHTML = `<g>${title(priceTop, '价格（元）· 收盘价 / 预计买卖价', '#475569')}${frame(priceTop, priceHeight)}${ticks(priceMin, priceMax, priceTop, priceHeight, value => value.toFixed(3), '#94a3b8')}`
+    + `${title(moneyTop, '资金（万元）· 持仓市值 / 占用本金 / 总盈亏', '#475569')}${frame(moneyTop, moneyHeight)}${ticks(yMin, yMax, moneyTop, moneyHeight, value => `${(value / 10000).toFixed(1)}万`, '#94a3b8', y(0))}${zero}`
+    + `${level(buyLevel, '#10b981', '买')}${level(sellLevel, '#f97316', '卖')}${markerSvg}</g>`
+    + `<path d="${path(point => point.current, priceY)}" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linejoin="round"/>`
+    + `<path d="${path(point => point.positionValue)}" fill="none" stroke="#3b82f6" stroke-width="1.2" stroke-linejoin="round"/><path d="${capitalPath}" fill="none" stroke="#f59e0b" stroke-width="1.2"/><path d="${path(point => point.pnl)}" fill="none" stroke="#f43f5e" stroke-width="1.2" stroke-linejoin="round"/>${labels}`
+    + `<g class="chart-crosshair" visibility="hidden" pointer-events="none"><line class="crosshair-v" y1="${priceTop}" y2="${plotBottom}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/><line class="crosshair-h" x1="${left}" x2="${width - right}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>`
+    + ['position:#3b82f6', 'capital:#f59e0b', 'profit:#f43f5e', 'current:#6366f1'].map(item => { const [name, color] = item.split(':'); return `<circle class="dot-${name}" r="3.5" fill="${color}" stroke="#fff" stroke-width="1.5"/>`; }).join('')
+    + `<g class="chart-tooltip"><rect fill="#ffffff" fill-opacity=".97" stroke="#e2e8f0" rx="6"/>${tipLines.map((name, index) => `<text class="tip-${name}" x="10" y="${17 + index * 18}" fill="${index ? '#475569' : '#0f172a'}" font-size="10"${index ? '' : ' font-weight="700"'}/>`).join('')}</g></g>`
+    + `<rect class="chart-hit-area" x="${left}" y="${priceTop}" width="${chartWidth}" height="${plotBottom - priceTop}" fill="transparent" style="cursor:crosshair"/>`;
   const crosshair = svg.querySelector('.chart-crosshair') as SVGGElement, tooltip = svg.querySelector('.chart-tooltip') as SVGGElement;
   const set = (selector: string, attrs: Record<string, number | string>) => { const el = svg.querySelector(selector)!; for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, String(value)); };
   const setText = (name: string, text: string) => { tooltip.querySelector(`.tip-${name}`)!.textContent = text; };
@@ -598,8 +616,9 @@ export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nex
     const pointerX = (event.clientX - bounds.left) * width / bounds.width, pointerY = (event.clientY - bounds.top) * height / bounds.height;
     const index = Math.max(0, Math.min(series.length - 1, Math.round((pointerX - left) / chartWidth * (series.length - 1))));
     const point = series[index], xx = x(index), trade = tradeByDate.get(point.date);
+    const inPanel = (pointerY >= priceTop && pointerY <= priceTop + priceHeight) || (pointerY >= moneyTop && pointerY <= plotBottom);
     set('.crosshair-v', { x1: xx, x2: xx });
-    set('.crosshair-h', { y1: pointerY, y2: pointerY });
+    set('.crosshair-h', { y1: pointerY, y2: pointerY, visibility: inPanel ? 'visible' : 'hidden' }); // 横向十字线只在两张图内显示
     set('.dot-position', { cx: xx, cy: y(point.positionValue) });
     set('.dot-capital', { cx: xx, cy: y(point.capitalUsed) });
     set('.dot-profit', { cx: xx, cy: y(point.pnl) });
@@ -612,14 +631,15 @@ export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nex
     setText('profit', `总盈亏  ${formatMoney(point.pnl)}`);
     const tooltipWidth = 200, tooltipHeight = 18 * tipLines.length + 8;
     const tooltipX = xx > width - right - tooltipWidth - 12 ? xx - tooltipWidth - 12 : xx + 12;
-    const tooltipY = Math.max(top, Math.min(height - bottom - tooltipHeight, pointerY - tooltipHeight / 2));
+    const tooltipY = Math.max(priceTop, Math.min(plotBottom - tooltipHeight, pointerY - tooltipHeight / 2));
     tooltip.setAttribute('transform', `translate(${tooltipX},${tooltipY})`);
     set('.chart-tooltip rect', { width: tooltipWidth, height: tooltipHeight });
     crosshair.setAttribute('visibility', 'visible');
   };
   const hitArea = svg.querySelector('.chart-hit-area')!;
   hitArea.addEventListener('pointermove', event => showPoint(event as PointerEvent));
-  hitArea.addEventListener('pointerleave', () => crosshair.setAttribute('visibility', 'hidden'));
+  // 横向十字线单独设置过可见状态，父级隐藏时它不会跟着隐藏，需要一并收起。
+  hitArea.addEventListener('pointerleave', () => { crosshair.setAttribute('visibility', 'hidden'); set('.crosshair-h', { visibility: 'hidden' }); });
 }
 
 // ---------- 备份对比曲线 ----------
@@ -643,19 +663,21 @@ export function renderCompareChart(svg: SVGSVGElement, pure: EquityPoint[], live
   const y = (value: number) => top + (yMax - value) / (yMax - yMin) * chartHeight;
   const label = (value: number) => yMax - yMin < 20000 ? Math.round(value).toLocaleString('zh-CN') : `${(value / 10000).toFixed(1)}万`;
   const path = (values: number[]) => values.map((value, index) => `${index ? 'L' : 'M'}${x(index).toFixed(1)},${y(value).toFixed(1)}`).join('');
-  const grid = Array.from({ length: 5 }, (_, index) => { const value = yMin + (yMax - yMin) * index / 4, yy = y(value); return `<line x1="${left}" x2="${width - right}" y1="${yy}" y2="${yy}" stroke="#e2e8f0"/><text x="${left - 8}" y="${yy + 4}" text-anchor="end" fill="#94a3b8" font-size="10">${label(value)}</text>`; }).join('');
-  const zero = lo < 0 && hi > 0 ? `<line x1="${left}" x2="${width - right}" y1="${y(0)}" y2="${y(0)}" stroke="#475569" stroke-width="1.5" stroke-dasharray="6 4"/>` : '';
+  // 总盈亏的取值范围始终包含 0，一律画 0 轴；其他指标只在数值跨过 0 时才画。
+  const zeroY = metric === 'pnl' || (lo < 0 && hi > 0) ? y(0) : undefined;
+  const grid = Array.from({ length: 5 }, (_, index) => { const value = yMin + (yMax - yMin) * index / 4, yy = y(value); if (zeroY !== undefined && Math.abs(yy - zeroY) < 12) return `<line x1="${left}" x2="${width - right}" y1="${yy}" y2="${yy}" stroke="#f1f5f9"/>`; return `<line x1="${left}" x2="${width - right}" y1="${yy}" y2="${yy}" stroke="#f1f5f9"/><text x="${left - 8}" y="${yy + 4}" text-anchor="end" fill="#94a3b8" font-size="10">${label(value)}</text>`; }).join('');
+  const zero = zeroY !== undefined ? `<line x1="${left}" x2="${width - right}" y1="${zeroY}" y2="${zeroY}" stroke="#475569" stroke-width="1.3"/><text x="${left - 8}" y="${zeroY + 4}" text-anchor="end" fill="#334155" font-size="10" font-weight="700">0</text>` : '';
   const labels = [0, Math.floor((pure.length - 1) / 2), pure.length - 1].map(index => `<text x="${x(index)}" y="${height - 12}" text-anchor="middle" fill="#94a3b8" font-size="10">${pure[index].date}</text>`).join('');
   const markerIndex = marker ? pure.findIndex(point => point.date >= marker.date) : -1;
   const markerSvg = marker && markerIndex >= 0
-    ? `<line x1="${x(markerIndex)}" x2="${x(markerIndex)}" y1="${top}" y2="${height - bottom}" stroke="#0369a1" stroke-width="1.2" stroke-dasharray="4 3"/><text x="${x(markerIndex) + (markerIndex > pure.length * .8 ? -5 : 5)}" y="${top + 10}" text-anchor="${markerIndex > pure.length * .8 ? 'end' : 'start'}" fill="#0369a1" font-size="10" font-weight="700">${marker.label}</text>` : '';
+    ? `<line x1="${x(markerIndex)}" x2="${x(markerIndex)}" y1="${top}" y2="${height - bottom}" stroke="#0ea5e9" stroke-width="1" stroke-dasharray="4 3"/><text x="${x(markerIndex) + (markerIndex > pure.length * .8 ? -5 : 5)}" y="${top + 10}" text-anchor="${markerIndex > pure.length * .8 ? 'end' : 'start'}" fill="#0ea5e9" font-size="10" font-weight="600">${marker.label}</text>` : '';
   const format = metric === 'pnl' ? formatMoney : (value: number) => `¥${formatAmount(value)}`;
   const tipLines = ['date', 'pure', 'live', 'diff'];
   svg.innerHTML = `<g>${grid}${zero}${markerSvg}</g>`
-    + `<path d="${path(pureValues)}" fill="none" stroke="#2563eb" stroke-width="1.8"/><path d="${path(liveValues)}" fill="none" stroke="#ea580c" stroke-width="1.8" stroke-dasharray="6 3"/>${labels}`
-    + `<g class="cmp-crosshair" visibility="hidden" pointer-events="none"><line class="cmp-v" y1="${top}" y2="${height - bottom}" stroke="#64748b" stroke-width="1" stroke-dasharray="3 3"/>`
-    + `<circle class="cmp-dot-pure" r="4" fill="#2563eb" stroke="#fff" stroke-width="2"/><circle class="cmp-dot-live" r="4" fill="#ea580c" stroke="#fff" stroke-width="2"/>`
-    + `<g class="cmp-tip"><rect fill="#0f172a" fill-opacity=".94" rx="6"/>${tipLines.map((name, index) => `<text class="cmp-${name}" x="10" y="${17 + index * 18}" fill="#f8fafc" font-size="10"${index ? '' : ' font-weight="700"'}/>`).join('')}</g></g>`
+    + `<path d="${path(pureValues)}" fill="none" stroke="#3b82f6" stroke-width="1.3" stroke-linejoin="round"/><path d="${path(liveValues)}" fill="none" stroke="#f97316" stroke-width="1.3" stroke-dasharray="5 3" stroke-linejoin="round"/>${labels}`
+    + `<g class="cmp-crosshair" visibility="hidden" pointer-events="none"><line class="cmp-v" y1="${top}" y2="${height - bottom}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>`
+    + `<circle class="cmp-dot-pure" r="3.5" fill="#3b82f6" stroke="#fff" stroke-width="1.5"/><circle class="cmp-dot-live" r="3.5" fill="#f97316" stroke="#fff" stroke-width="1.5"/>`
+    + `<g class="cmp-tip"><rect fill="#ffffff" fill-opacity=".97" stroke="#e2e8f0" rx="6"/>${tipLines.map((name, index) => `<text class="cmp-${name}" x="10" y="${17 + index * 18}" fill="${index ? '#475569' : '#0f172a'}" font-size="10"${index ? '' : ' font-weight="700"'}/>`).join('')}</g></g>`
     + `<rect class="cmp-hit" x="${left}" y="${top}" width="${chartWidth}" height="${chartHeight}" fill="transparent" style="cursor:crosshair"/>`;
   const crosshair = svg.querySelector('.cmp-crosshair') as SVGGElement, tip = svg.querySelector('.cmp-tip') as SVGGElement;
   const set = (selector: string, attrs: Record<string, number | string>) => { const el = svg.querySelector(selector)!; for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, String(value)); };
