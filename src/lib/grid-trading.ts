@@ -605,11 +605,11 @@ function hardenTouch(svg: SVGSVGElement) {
  * 上图“价格”（收盘价、预计买入/卖出价），下图“资金”（持仓市值、占用本金阶梯线、总盈亏）。
  * 各自有边框、标题和纵轴，不再把两套刻度叠在一起；十字光标与备份点竖线同时穿过两张图。
  */
-export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nextBuy: number | undefined, nextSell: number | undefined, trades: Trade[] = [], marker?: { date: string; label: string }) {
+export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nextBuy: number | undefined, nextSell: number | undefined, trades: Trade[] = [], marker?: { date: string; label: string }, gridStep?: { down: number; up: number }) {
   if (!series.length || !Number.isFinite(nextBuy) || !Number.isFinite(nextSell)) { svg.innerHTML = '<text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">暂无完整曲线数据</text>'; return; }
   const buyLevel = nextBuy!, sellLevel = nextSell!;
   const width = chartWidthOf(svg), compact = width < 600, left = compact ? 46 : 62, right = compact ? 58 : 70, chartWidth = width - left - right;
-  watchResize(svg, width, () => renderEquityChart(svg, series, nextBuy, nextSell, trades, marker));
+  watchResize(svg, width, () => renderEquityChart(svg, series, nextBuy, nextSell, trades, marker, gridStep));
   const priceTop = 30, priceHeight = 150, moneyTop = 218, moneyHeight = 150, plotBottom = moneyTop + moneyHeight, height = plotBottom + 30;
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
   hardenTouch(svg);
@@ -636,15 +636,31 @@ export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nex
   // 0 轴：实线、深色，并在纵轴上标出“0”，盈亏正负一目了然。
   const zero = `<line x1="${left}" x2="${width - right}" y1="${y(0)}" y2="${y(0)}" stroke="#475569" stroke-width="1.3"/><text x="${left - 8}" y="${y(0) + 4}" text-anchor="end" fill="#334155" font-size="10" font-weight="700">0</text>`;
   const level = (value: number, color: string, label: string) => `<line x1="${left}" x2="${width - right}" y1="${priceY(value)}" y2="${priceY(value)}" stroke="${color}" stroke-width="1" stroke-dasharray="4 3"/><text x="${width - right + 8}" y="${priceY(value) + 4}" fill="${color}" font-size="10" font-weight="500">${label} ${value.toFixed(3)}</text>`;
+  // 步长线：从预计买入价向下、预计卖出价向上，按“步长 − 反弹/回落”的间距逐格延伸，直到覆盖区间内的最低/最高收盘价。
+  const lowClose = Math.min(...series.map(point => point.current)), highClose = Math.max(...series.map(point => point.current));
+  const stepLines = (from: number, gap: number, dir: 1 | -1, limit: number, color: string) => {
+    if (!(gap > 0) || !Number.isFinite(gap)) return '';
+    const pixelGap = gap / (priceMax - priceMin) * priceHeight, showLabel = pixelGap >= 12;
+    if (pixelGap < 3) return ''; // 过密时不画，避免糊成一片
+    let out = '';
+    for (let k = 1, value = from + dir * gap; k <= 80 && (dir < 0 ? value >= limit - gap * .5 : value <= limit + gap * .5); k++, value = from + dir * gap * (k)) {
+      const yy = priceY(value);
+      if (yy < priceTop || yy > priceTop + priceHeight) continue;
+      out += `<line x1="${left}" x2="${width - right}" y1="${yy}" y2="${yy}" stroke="${color}" stroke-width=".8" stroke-dasharray="2 4" opacity=".7"/>`
+        + (showLabel ? `<text x="${width - right + 8}" y="${yy + 3}" fill="${color}" font-size="9" opacity=".8">${value.toFixed(3)}</text>` : '');
+    }
+    return out;
+  };
+  const stepSvg = gridStep ? stepLines(buyLevel, gridStep.down, -1, lowClose, '#10b981') + stepLines(sellLevel, gridStep.up, 1, highClose, '#f97316') : '';
   const labels = [0, Math.floor((series.length - 1) / 2), series.length - 1].map(index => `<text x="${x(index)}" y="${plotBottom + 18}" text-anchor="middle" fill="#94a3b8" font-size="10">${series[index].date}</text>`).join('');
   // 备份点：在备份日画一条竖线（穿过两张图）并标注，便于区分备份时的数据与之后按网格续跑的走向。
   const markerIndex = marker ? series.findIndex(point => point.date >= marker.date) : -1;
   const markerSvg = marker && markerIndex >= 0
     ? `<line x1="${x(markerIndex)}" x2="${x(markerIndex)}" y1="${priceTop}" y2="${plotBottom}" stroke="#0ea5e9" stroke-width="1" stroke-dasharray="4 3"/><text x="${x(markerIndex) + (markerIndex > series.length * .8 ? -5 : 5)}" y="${priceTop + 11}" text-anchor="${markerIndex > series.length * .8 ? 'end' : 'start'}" fill="#0ea5e9" font-size="10" font-weight="600">${marker.label}</text>` : '';
   const tipLines = ['date', 'trade', 'current', 'position', 'capital', 'profit'];
-  svg.innerHTML = `<g>${title(priceTop, '价格（元）· 收盘价 / 预计买卖价', '#475569')}${frame(priceTop, priceHeight)}${ticks(priceMin, priceMax, priceTop, priceHeight, value => value.toFixed(3), '#94a3b8')}`
+  svg.innerHTML = `<g>${title(priceTop, '价格（元）· 收盘价 / 预计买卖价 / 步长线', '#475569')}${frame(priceTop, priceHeight)}${ticks(priceMin, priceMax, priceTop, priceHeight, value => value.toFixed(3), '#94a3b8')}`
     + `${title(moneyTop, '资金（万元）· 持仓市值 / 占用本金 / 总盈亏', '#475569')}${frame(moneyTop, moneyHeight)}${ticks(yMin, yMax, moneyTop, moneyHeight, value => `${(value / 10000).toFixed(1)}万`, '#94a3b8', y(0))}${zero}`
-    + `${level(buyLevel, '#10b981', '买')}${level(sellLevel, '#f97316', '卖')}${markerSvg}</g>`
+    + `${stepSvg}${level(buyLevel, '#10b981', '买')}${level(sellLevel, '#f97316', '卖')}${markerSvg}</g>`
     + `<path d="${path(point => point.current, priceY)}" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linejoin="round"/>`
     + `<path d="${path(point => point.positionValue)}" fill="none" stroke="#3b82f6" stroke-width="1.2" stroke-linejoin="round"/><path d="${capitalPath}" fill="none" stroke="#f59e0b" stroke-width="1.2"/><path d="${path(point => point.pnl)}" fill="none" stroke="#f43f5e" stroke-width="1.2" stroke-linejoin="round"/>${labels}`
     + `<g class="chart-crosshair" visibility="hidden" pointer-events="none"><line class="crosshair-v" y1="${priceTop}" y2="${plotBottom}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/><line class="crosshair-h" x1="${left}" x2="${width - right}" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>`
