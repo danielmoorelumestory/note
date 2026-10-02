@@ -52,21 +52,26 @@ const detailUrl = href('lab/grid-trading/detail');
   };
   // 状态排序：先按方向分两组（离买入价近的在上、离卖出价近的在下，无状态的垫底），组内按距离的绝对值排序。
   const statusKey = (item: SavedRecord) => { const status = gridStatus(item); return { group: status ? (status.tone === 'buy' ? 0 : 1) : 2, distance: status ? Math.abs(status.gap) : 0 }; };
-  type SortField = 'status' | 'last-buy' | 'capital' | 'pnl';
+  type SortField = 'status' | 'last-buy' | 'capital' | 'pnl' | 'to-high' | 'to-low';
   let sortField: SortField | null = null;
   let sortOrder: 'asc' | 'desc' = 'desc';
   const sortMark = (field: SortField) => sortField === field ? (sortOrder === 'asc' ? ' ↑' : ' ↓') : '';
   // 近四年最高/最低价：按代码异步加载；距离按“当前价到高/低点 ÷ 对应方向的网格间距”折算成格数，
   // 间距与走势图步长线一致（向上为 步长−回落，向下为 步长−反弹）。
   const extremes = new Map<string, { high: number; low: number } | null>();
-  const stepsCell = (item: SavedRecord, side: 'high' | 'low') => {
+  const stepsOf = (item: SavedRecord, side: 'high' | 'low') => {
     const range = extremes.get(item.row.code);
-    if (range === undefined) return '<td class="computed muted">加载中…</td>';
-    if (!range) return '<td class="computed muted">—</td>';
+    if (!range) return range;
     const { step, rebound, pullback } = item.row, gap = side === 'high' ? step - pullback : step - rebound;
-    if (!(gap > 0)) return '<td class="computed muted">—</td>';
-    const target = side === 'high' ? range.high : range.low, steps = Math.max(0, (side === 'high' ? target - item.result.current : item.result.current - target) / gap);
-    return `<td class="computed">${steps.toFixed(1)} 步<span class="sub">¥${formatPrice(target).replace('¥', '')}</span></td>`;
+    if (!(gap > 0)) return null;
+    const target = side === 'high' ? range.high : range.low;
+    return { steps: Math.max(0, (side === 'high' ? target - item.result.current : item.result.current - target) / gap), target };
+  };
+  const stepsCell = (item: SavedRecord, side: 'high' | 'low') => {
+    const value = stepsOf(item, side);
+    if (value === undefined) return '<td class="computed muted">加载中…</td>';
+    if (!value) return '<td class="computed muted">—</td>';
+    return `<td class="computed">${value.steps.toFixed(1)} 步<span class="sub">¥${formatPrice(value.target).replace('¥', '')}</span></td>`;
   };
   async function loadExtremes() {
     const codes = [...new Set(readRecords().map(item => item.row.code))].filter(code => !extremes.has(code));
@@ -127,6 +132,11 @@ const detailUrl = href('lab/grid-trading/detail');
         return aDate.localeCompare(bDate) * direction;
       }
       if (sortField === 'status') { const x = statusKey(a), y = statusKey(b); return x.group - y.group || (x.distance - y.distance) * direction; }
+      if (sortField === 'to-high' || sortField === 'to-low') {
+        const x = stepsOf(a, sortField === 'to-high' ? 'high' : 'low'), y = stepsOf(b, sortField === 'to-high' ? 'high' : 'low');
+        if (!x || !y) return !x && !y ? 0 : !x ? 1 : -1; // 未加载或无数据的垫底
+        return (x.steps - y.steps) * direction;
+      }
       return (sortField === 'capital' ? currentCapital(a) - currentCapital(b) : a.result.pnl - b.result.pnl) * direction;
     });
   }
@@ -152,11 +162,11 @@ const detailUrl = href('lab/grid-trading/detail');
               <th>代码</th>
               <th>名称</th>
               <th><button class="sort-button" data-sort="status" type="button">当前状态${sortMark('status')}</button></th>
+              <th><button class="sort-button" data-sort="to-high" type="button">四年最高${sortMark('to-high')}</button></th>
+              <th><button class="sort-button" data-sort="to-low" type="button">四年最低${sortMark('to-low')}</button></th>
               <th>当前价格</th>
-              <th>预计下次买入</th>
-              <th>预计下次卖出</th>
-              <th>距近四年最高</th>
-              <th>距近四年最低</th>
+              <th>下次买入</th>
+              <th>下次卖出</th>
               <th><button class="sort-button" data-sort="last-buy" type="button">上次买入时间${sortMark('last-buy')}</button></th>
               <th>上次成交价</th>
               <th>网格步长</th>
@@ -178,11 +188,11 @@ const detailUrl = href('lab/grid-trading/detail');
                 <td class="code-cell">${item.row.code}</td>
                 <td class="stock-name">${item.row.name || item.row.code}</td>
                 ${statusCell(item)}
+                ${stepsCell(item, 'high')}
+                ${stepsCell(item, 'low')}
                 <td class="computed">${formatPrice(item.result.current)}</td>
                 <td class="computed down">${formatPrice(item.result.nextBuy)}</td>
                 <td class="computed up">${formatPrice(item.result.nextSell)}</td>
-                ${stepsCell(item, 'high')}
-                ${stepsCell(item, 'low')}
                 <td>${lastBuyDate(item)}</td>
                 <td class="computed">${formatPrice(item.result.lastTrade)}</td>
                 ${paramCell(item, 'step')}
@@ -282,7 +292,7 @@ const detailUrl = href('lab/grid-trading/detail');
     if (sortButton?.dataset.sort) {
       const field = sortButton.dataset.sort as SortField;
       if (sortField === field) sortOrder = sortOrder === 'desc' ? 'asc' : 'desc';
-      else { sortField = field; sortOrder = field === 'status' ? 'asc' : 'desc'; }
+      else { sortField = field; sortOrder = field === 'status' || field === 'to-high' || field === 'to-low' ? 'asc' : 'desc'; }
       render();
       return;
     }
@@ -346,8 +356,8 @@ const detailUrl = href('lab/grid-trading/detail');
   .table-shell::-webkit-scrollbar-thumb:hover { background-color: #94a3b8; }
 
   .grid-table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: 12px; }
-  .grid-table th { height: 46px; padding: 12px 10px; border-bottom: 1px solid #cbd5e1; background: #f8fafc; color: #475569; font-weight: 600; white-space: nowrap; text-align: center; }
-  .grid-table td { height: 50px; padding: 8px 10px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; text-align: center; vertical-align: middle; color: #334155; font-variant-numeric: tabular-nums; }
+  .grid-table th { height: 46px; padding: 12px 6px; border-bottom: 1px solid #cbd5e1; background: #f8fafc; color: #475569; font-weight: 600; white-space: nowrap; text-align: center; }
+  .grid-table td { height: 50px; padding: 8px 6px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; text-align: center; vertical-align: middle; color: #334155; font-variant-numeric: tabular-nums; }
   .grid-table tbody tr { cursor: pointer; transition: background-color .15s ease; }
   .grid-table tbody tr:hover { background-color: #f1f5f9; }
   .grid-table tr:last-child td { border-bottom: 0; }
@@ -355,13 +365,14 @@ const detailUrl = href('lab/grid-trading/detail');
   .grid-table .muted { color:#94a3b8; }
   .grid-table .sub { display:block; color:#94a3b8; font-size:11px; }
   .grid-table .code-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; }
-  .grid-table .stock-name { min-width: 110px; color: #475569 !important; text-align: center; }
-  .grid-table .computed { min-width: 84px; text-align: center; }
+  .grid-table .stock-name { width: 84px; max-width: 84px; white-space: normal; word-break: break-all; line-height: 1.3; color: #475569 !important; text-align: left; }
+  .grid-table th:nth-child(2) { text-align: left; }
+  .grid-table .computed { min-width: 60px; text-align: center; }
   .grid-table .up { color: #dc2626 !important; font-weight: 700; }
   .grid-table .down { color: #16a34a !important; font-weight: 700; }
 
-  .grid-table .row-actions { min-width: 68px; text-align: center; }
-  .grid-table .param-cell { min-width: 96px; line-height: 1.35; }
+  .grid-table .row-actions { min-width: 56px; text-align: center; }
+  .grid-table .param-cell { min-width: 72px; line-height: 1.35; }
   .grid-table .ratio { display: block; margin-top: 2px; color: #94a3b8; font-size: 11px; }
   .grid-table .param-input { width: 72px; padding: 3px 6px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: inherit; font: inherit; font-variant-numeric: tabular-nums; text-align: center; cursor: text; -moz-appearance: textfield; }
   .grid-table .param-input::-webkit-inner-spin-button, .grid-table .param-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
@@ -372,7 +383,7 @@ const detailUrl = href('lab/grid-trading/detail');
   .grid-table .confirm-param:hover { background: #075985; }
   .grid-table .confirm-param:disabled { opacity: .6; cursor: wait; }
   .grid-table .confirm-param[hidden] { display: none; }
-  .grid-table .status-cell { min-width: 132px; line-height: 1.35; }
+  .grid-table .status-cell { min-width: 104px; line-height: 1.35; }
   .grid-table .status-badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; background: #f1f5f9; color: #64748b; }
   .grid-table .status-badge.buy { background: #f0fdf4; color: #16a34a; }
   .grid-table .status-badge.sell { background: #fef2f2; color: #dc2626; }
