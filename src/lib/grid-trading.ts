@@ -629,7 +629,7 @@ function hardenTouch(svg: SVGSVGElement) {
 export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nextBuy: number | undefined, nextSell: number | undefined, trades: Trade[] = [], marker?: { date: string; label: string }, gridStep?: { down: number; up: number }) {
   if (!series.length || !Number.isFinite(nextBuy) || !Number.isFinite(nextSell)) { svg.innerHTML = '<text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">暂无完整曲线数据</text>'; return; }
   const buyLevel = nextBuy!, sellLevel = nextSell!;
-  const width = chartWidthOf(svg), compact = width < 600, left = compact ? 46 : 62, right = compact ? 58 : 70, chartWidth = width - left - right;
+  const width = chartWidthOf(svg), compact = width < 600, left = compact ? 56 : 62, right = compact ? 70 : 70, chartWidth = width - left - right;
   watchResize(svg, width, () => renderEquityChart(svg, series, nextBuy, nextSell, trades, marker, gridStep));
   const priceTop = 30, priceHeight = 150, moneyTop = 218, moneyHeight = 150, plotBottom = moneyTop + moneyHeight, height = plotBottom + 30;
   svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
