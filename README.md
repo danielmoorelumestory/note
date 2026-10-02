@@ -1,6 +1,6 @@
 # 记
 
-个人笔记和浏览器小功能。静态站，发到 [GitHub Pages](https://danielmoorelumestory.github.io/note/)。
+个人笔记和浏览器小功能。静态站，现有版本发布到 [GitHub Pages](https://danielmoorelumestory.github.io/note/)，也可直接部署到 Vercel。
 
 ## 本地
 
@@ -40,3 +40,14 @@ draft: false
 推 `main`。Actions 会构建并部署。仓库 Settings → Pages → Source 选 **GitHub Actions**（只需设一次）。
 
 线上地址：https://danielmoorelumestory.github.io/note/
+
+## Vercel 首次部署
+
+这个项目是 Astro，不需要改写成 React/Vite。到 Vercel 导入 GitHub 仓库 `danielmoorelumestory/note`，保持自动识别出的设置即可：
+
+- Framework Preset：Astro
+- Build Command：`npm run build`
+- Output Directory：`dist`
+- Install Command：`npm install`
+
+首次部署成功后，Vercel 会提供一个 `*.vercel.app` 地址。`astro.config.mjs` 已按部署环境处理路径：GitHub Pages 使用 `/note`，Vercel 使用根路径 `/`，两边的链接都能正常工作。
