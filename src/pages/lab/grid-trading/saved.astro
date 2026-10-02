@@ -27,7 +27,7 @@ const detailUrl = href('lab/grid-trading/detail');
   import {
     readRecords, writeRecords, saveRecord, refreshRecord, refreshRecords, removeRecords, syncAll, pushRecord, withParamChange,
     gridStatus, openingOf, formatMoney, formatPrice, tick, marketSessionOpen, marketToday, SYNC_KEY_STORAGE,
-    blockCopy,
+    blockCopy, getFourYearExtremes,
     type SavedRecord,
   } from '../../../lib/grid-trading';
 
@@ -56,6 +56,25 @@ const detailUrl = href('lab/grid-trading/detail');
   let sortField: SortField | null = null;
   let sortOrder: 'asc' | 'desc' = 'desc';
   const sortMark = (field: SortField) => sortField === field ? (sortOrder === 'asc' ? ' ↑' : ' ↓') : '';
+  // 近四年最高/最低价：按代码异步加载；距离按“当前价到高/低点 ÷ 对应方向的网格间距”折算成格数，
+  // 间距与走势图步长线一致（向上为 步长−回落，向下为 步长−反弹）。
+  const extremes = new Map<string, { high: number; low: number } | null>();
+  const stepsCell = (item: SavedRecord, side: 'high' | 'low') => {
+    const range = extremes.get(item.row.code);
+    if (range === undefined) return '<td class="computed muted">加载中…</td>';
+    if (!range) return '<td class="computed muted">—</td>';
+    const { step, rebound, pullback } = item.row, gap = side === 'high' ? step - pullback : step - rebound;
+    if (!(gap > 0)) return '<td class="computed muted">—</td>';
+    const target = side === 'high' ? range.high : range.low, steps = Math.max(0, (side === 'high' ? target - item.result.current : item.result.current - target) / gap);
+    return `<td class="computed">${steps.toFixed(1)} 步<span class="sub">¥${formatPrice(target).replace('¥', '')}</span></td>`;
+  };
+  async function loadExtremes() {
+    const codes = [...new Set(readRecords().map(item => item.row.code))].filter(code => !extremes.has(code));
+    for (const code of codes) {
+      try { extremes.set(code, (await getFourYearExtremes(code)) ?? null); } catch { extremes.set(code, null); }
+      if (!container.querySelector('.param-input.dirty')) render();
+    }
+  }
   const syncInput = document.querySelector('#sync-key') as HTMLInputElement;
   const syncStatus = document.querySelector('#sync-status') as HTMLElement;
   const storedSyncKey = localStorage.getItem(SYNC_KEY_STORAGE);
@@ -136,6 +155,8 @@ const detailUrl = href('lab/grid-trading/detail');
               <th>当前价格</th>
               <th>预计下次买入</th>
               <th>预计下次卖出</th>
+              <th>距近四年最高</th>
+              <th>距近四年最低</th>
               <th><button class="sort-button" data-sort="last-buy" type="button">上次买入时间${sortMark('last-buy')}</button></th>
               <th>上次成交价</th>
               <th>网格步长</th>
@@ -160,6 +181,8 @@ const detailUrl = href('lab/grid-trading/detail');
                 <td class="computed">${formatPrice(item.result.current)}</td>
                 <td class="computed down">${formatPrice(item.result.nextBuy)}</td>
                 <td class="computed up">${formatPrice(item.result.nextSell)}</td>
+                ${stepsCell(item, 'high')}
+                ${stepsCell(item, 'low')}
                 <td>${lastBuyDate(item)}</td>
                 <td class="computed">${formatPrice(item.result.lastTrade)}</td>
                 ${paramCell(item, 'step')}
@@ -285,6 +308,7 @@ const detailUrl = href('lab/grid-trading/detail');
 
   render();
   void refreshMarket();
+  void loadExtremes();
 </script>
 
 <style>
@@ -328,6 +352,8 @@ const detailUrl = href('lab/grid-trading/detail');
   .grid-table tbody tr:hover { background-color: #f1f5f9; }
   .grid-table tr:last-child td { border-bottom: 0; }
 
+  .grid-table .muted { color:#94a3b8; }
+  .grid-table .sub { display:block; color:#94a3b8; font-size:11px; }
   .grid-table .code-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 500; }
   .grid-table .stock-name { min-width: 110px; color: #475569 !important; text-align: center; }
   .grid-table .computed { min-width: 84px; text-align: center; }

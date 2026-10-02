@@ -62,6 +62,7 @@ type CloudItem = SavedRecord | Tombstone;
 export const RECORDS_KEY = 'grid-trading-saved-v1';
 export const SYNC_KEY_STORAGE = 'grid-trading-sync-key-v1';
 const DELETED_KEY = 'grid-trading-deleted-v1';
+const EXTREMES_CACHE_PREFIX = 'grid-trading-extremes-v1:';
 const CANDLE_CACHE_PREFIX = 'grid-trading-candles-v2:';
 const QUOTE_CACHE_KEY = 'grid-trading-quotes-v1';
 const QUOTE_TTL = 60 * 1000;
@@ -157,6 +158,26 @@ export async function getCandles(code: string, begin: string, { force = false } 
   }
   const entry = await request;
   return entry.candles.filter(candle => candle.date >= begin);
+}
+
+/**
+ * 近四年（今年及前四个自然年，如 2026 年取 2022-01-01 起）的最高价与最低价，用于估算当前价离历史高低点还有多少格。
+ * 不下载日线：接口的年线只返回最新一根，改用月线（四年不到 60 根）取各月最高/最低；结果按代码缓存，每个交易日只查询一次。
+ */
+export async function getFourYearExtremes(code: string): Promise<{ high: number; low: number } | undefined> {
+  const symbol = symbolOf(code), today = marketToday(), key = `${EXTREMES_CACHE_PREFIX}${code.trim()}`;
+  const cached = readJson<{ fetchedOn: string; high: number; low: number } | null>(key, null);
+  if (cached?.fetchedOn === today) return { high: cached.high, low: cached.low };
+  const begin = `${Number(today.slice(0, 4)) - 4}-01-01`;
+  const response = await fetch(`https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${symbol},month,${begin},${today},640,qfq`, { signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new Error('行情服务暂不可用');
+  const payload = await response.json();
+  const bars: string[][] = payload.data?.[symbol]?.qfqmonth ?? payload.data?.[symbol]?.month ?? [];
+  const highs = bars.map(bar => Number(bar[3])).filter(Number.isFinite), lows = bars.map(bar => Number(bar[4])).filter(value => Number.isFinite(value) && value > 0);
+  if (!highs.length || !lows.length) return undefined;
+  const range = { high: Math.max(...highs), low: Math.min(...lows) };
+  writeJson(key, { fetchedOn: today, ...range });
+  return range;
 }
 
 export type Quote = { code: string; name: string; price: number; high: number; low: number; date: string };
@@ -640,14 +661,13 @@ export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nex
   const lowClose = Math.min(...series.map(point => point.current)), highClose = Math.max(...series.map(point => point.current));
   const stepLines = (from: number, gap: number, dir: 1 | -1, limit: number, color: string) => {
     if (!(gap > 0) || !Number.isFinite(gap)) return '';
-    const pixelGap = gap / (priceMax - priceMin) * priceHeight, showLabel = pixelGap >= 12;
+    const pixelGap = gap / (priceMax - priceMin) * priceHeight;
     if (pixelGap < 3) return ''; // 过密时不画，避免糊成一片
     let out = '';
     for (let k = 1, value = from + dir * gap; k <= 80 && (dir < 0 ? value >= limit - gap * .5 : value <= limit + gap * .5); k++, value = from + dir * gap * (k)) {
       const yy = priceY(value);
       if (yy < priceTop || yy > priceTop + priceHeight) continue;
-      out += `<line x1="${left}" x2="${width - right}" y1="${yy}" y2="${yy}" stroke="${color}" stroke-width=".8" stroke-dasharray="2 4" opacity=".7"/>`
-        + (showLabel ? `<text x="${width - right + 8}" y="${yy + 3}" fill="${color}" font-size="9" opacity=".8">${value.toFixed(3)}</text>` : '');
+      out += `<line x1="${left}" x2="${width - right}" y1="${yy}" y2="${yy}" stroke="${color}" stroke-width=".8" stroke-dasharray="2 4" opacity=".7"/>`;
     }
     return out;
   };
@@ -658,7 +678,7 @@ export function renderEquityChart(svg: SVGSVGElement, series: EquityPoint[], nex
   const markerSvg = marker && markerIndex >= 0
     ? `<line x1="${x(markerIndex)}" x2="${x(markerIndex)}" y1="${priceTop}" y2="${plotBottom}" stroke="#0ea5e9" stroke-width="1" stroke-dasharray="4 3"/><text x="${x(markerIndex) + (markerIndex > series.length * .8 ? -5 : 5)}" y="${priceTop + 11}" text-anchor="${markerIndex > series.length * .8 ? 'end' : 'start'}" fill="#0ea5e9" font-size="10" font-weight="600">${marker.label}</text>` : '';
   const tipLines = ['date', 'trade', 'current', 'position', 'capital', 'profit'];
-  svg.innerHTML = `<g>${title(priceTop, '价格（元）· 收盘价 / 预计买卖价 / 步长线', '#475569')}${frame(priceTop, priceHeight)}${ticks(priceMin, priceMax, priceTop, priceHeight, value => value.toFixed(3), '#94a3b8')}`
+  svg.innerHTML = `<g>${title(priceTop, '价格（元）· 收盘价 / 预计买卖价', '#475569')}${frame(priceTop, priceHeight)}${ticks(priceMin, priceMax, priceTop, priceHeight, value => value.toFixed(3), '#94a3b8')}`
     + `${title(moneyTop, '资金（万元）· 持仓市值 / 占用本金 / 总盈亏', '#475569')}${frame(moneyTop, moneyHeight)}${ticks(yMin, yMax, moneyTop, moneyHeight, value => `${(value / 10000).toFixed(1)}万`, '#94a3b8', y(0))}${zero}`
     + `${stepSvg}${level(buyLevel, '#10b981', '买')}${level(sellLevel, '#f97316', '卖')}${markerSvg}</g>`
     + `<path d="${path(point => point.current, priceY)}" fill="none" stroke="#6366f1" stroke-width="1.5" stroke-linejoin="round"/>`
