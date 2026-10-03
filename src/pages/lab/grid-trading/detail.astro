@@ -13,6 +13,14 @@ const savedUrl = href('lab/grid-trading/saved');
     <div class="chart-head"><div><h2>资金与收盘价变化曲线</h2><p>当前标的的历史回测数据；上图价格、下图资金，共用同一条时间轴</p></div><div class="legend axis-legend"><div class="legend-row"><b class="axis-tag tag-price">上图 · 价格</b><span class="line close"></span>收盘价 <span class="line buy-level"></span>预计买入 <span class="line sell-level"></span>预计卖出</div><div class="legend-row"><b class="axis-tag tag-money">下图 · 资金</b><span class="line position"></span>持仓市值 <span class="line capital"></span>占用本金 <span class="line profit"></span>总盈亏</div></div></div>
     <div class="chart-scroll"><svg id="equity-chart" viewBox="0 0 920 300" role="img" aria-label="当前标的的资金与收盘价变化曲线"><text x="460" y="150" text-anchor="middle" fill="#94a3b8" font-size="13">读取已保存回测数据后显示曲线</text></svg></div>
   </section>
+  <section class="minute-panel" aria-label="分钟线">
+    <div class="minute-head">
+      <div><h2>分钟线</h2><p id="minute-status">云端每个交易日收盘后自动抓取 1 分钟线，需要已填写同步密钥。</p></div>
+      <div class="minute-controls"><label>日期 <select id="minute-date"></select></label><label class="minute-check"><input id="minute-adjust" type="checkbox" checked> 前复权</label></div>
+    </div>
+    <div class="minute-summary" id="minute-summary"></div>
+    <div class="chart-scroll"><svg id="minute-chart" viewBox="0 0 920 360" role="img" aria-label="分钟价格与成交量"></svg></div>
+  </section>
   <section class="backup-panel" aria-label="备份对比">
     <div class="backup-head">
       <div><h2>备份对比</h2><p id="backup-desc">备份当前数据作为基准点。之后你手动微调买卖点（改成交、增删记录、改参数），这里会对比“从备份点起完全按网格买卖”与“你现在的实际数据”的收益差别。</p></div>
@@ -49,9 +57,10 @@ const savedUrl = href('lab/grid-trading/saved');
   import {
     calculateGrid, adjustmentsOf, getCandles, fetchQuotes, mergeQuote, refreshRecord, readRecords, saveRecord, pushRecord,
     renderEquityChart, renderCompareChart, holdingValue, openingOf, createBackup, replayBackup, refreshBackupSnapshot, upgradeBackup, formatMoney, formatAmount, formatPercent, tick,
-    blockCopy,
+    blockCopy, fetchMinuteBars, readSyncKey, marketToday, type MinuteBar,
     type SavedRecord, type Trade, type Adjustments, type GridResult, type Backup, type CompareMetric, type EquityPoint,
   } from '../../../lib/grid-trading';
+  import { renderMinuteChart, minuteSummaryHtml } from '../../../lib/minute-chart';
 
   blockCopy(); // 屏蔽页面内容复制
 
@@ -79,8 +88,49 @@ const savedUrl = href('lab/grid-trading/saved');
     note.textContent = text; note.hidden = !text;
   }
 
+  // 分钟线：云端读取最近 30 天内已同步的交易日，按标的只加载一次（切换前复权时重新读取）。
+  const minuteSvg = document.querySelector('#minute-chart') as SVGSVGElement;
+  const minuteDate = document.querySelector('#minute-date') as HTMLSelectElement;
+  const minuteAdjust = document.querySelector('#minute-adjust') as HTMLInputElement;
+  const minuteStatus = document.querySelector('#minute-status') as HTMLElement;
+  let minuteByDate = new Map<string, MinuteBar[]>(), minuteCode = '', minuteRequest = 0;
+  const minuteDaysAgo = (days: number) => { const day = new Date(`${marketToday()}T00:00:00Z`); day.setUTCDate(day.getUTCDate() - days); return day.toISOString().slice(0, 10).replaceAll('-', ''); };
+  function renderMinuteDay() {
+    const bars = minuteByDate.get(minuteDate.value) ?? [];
+    renderMinuteChart(minuteSvg, bars);
+    (document.querySelector('#minute-summary') as HTMLElement).innerHTML = minuteSummaryHtml(bars);
+  }
+  async function loadMinute(code: string, force = false) {
+    if (!force && code === minuteCode) return;
+    minuteCode = code;
+    const id = ++minuteRequest;
+    if (readSyncKey().length < 16) { minuteStatus.textContent = '请先在“已保存标的”页填写同步密钥，才能读取云端分钟线。'; renderMinuteChart(minuteSvg, []); return; }
+    minuteStatus.textContent = '正在读取分钟线…';
+    try {
+      const bars = await fetchMinuteBars(code, minuteDaysAgo(30), minuteDaysAgo(-1), minuteAdjust.checked ? 'qfq' : 'none');
+      if (id !== minuteRequest) return;
+      minuteByDate = new Map();
+      for (const bar of bars) { const date = bar.ts.slice(0, 8); minuteByDate.set(date, [...(minuteByDate.get(date) ?? []), bar]); }
+      const dates = [...minuteByDate.keys()].sort().reverse(), previous = minuteDate.value;
+      minuteDate.innerHTML = dates.map(date => `<option value="${date}">${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}</option>`).join('');
+      if (dates.includes(previous)) minuteDate.value = previous;
+      minuteStatus.textContent = dates.length ? `已同步 ${dates.length} 个交易日（最近 30 天内）` : '最近 30 天内暂无该标的的分钟线；云端每个交易日收盘后（15:10）自动抓取。';
+      renderMinuteDay();
+    } catch (error) {
+      if (id !== minuteRequest) return;
+      minuteCode = ''; minuteByDate = new Map(); minuteDate.innerHTML = '';
+      (document.querySelector('#minute-summary') as HTMLElement).innerHTML = '';
+      minuteStatus.textContent = error instanceof Error ? error.message : '读取分钟线失败。';
+      renderMinuteChart(minuteSvg, []);
+    }
+  }
+  minuteDate.addEventListener('change', renderMinuteDay);
+  minuteAdjust.addEventListener('change', () => void loadMinute(minuteCode, true));
+  new ResizeObserver(() => { if (minuteByDate.size) renderMinuteDay(); }).observe(minuteSvg.parentElement!);
+
   function render(item: SavedRecord) {
     const { row, result } = item;
+    void loadMinute(row.code);
     document.querySelector('#title')!.textContent = `${row.name} · ${row.code}`;
     const detailLine = `${result.range} · 初始价 ${openingOf(item).price} · 每格金额 ¥${row.gridAmount.toLocaleString('zh-CN')}`;
     if (viewBackup) {
@@ -494,6 +544,17 @@ const savedUrl = href('lab/grid-trading/saved');
 </style>
 
 <style is:global>
+  .minute-panel { margin-top:28px; padding:18px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; }
+  .minute-head { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:10px; flex-wrap:wrap; }
+  .minute-head h2 { margin:0 0 3px; color:#1e293b; font-size:16px; }
+  .minute-head p { margin:0; color:#94a3b8; font-size:12px; }
+  .minute-controls { display:flex; align-items:center; gap:14px; color:#475569; font-size:13px; }
+  .minute-controls label { display:flex; align-items:center; gap:6px; }
+  .minute-controls select { border:1px solid #cbd5e1; border-radius:6px; padding:5px 8px; background:#fff; color:#334155; font-size:13px; }
+  .minute-summary { display:flex; flex-wrap:wrap; gap:8px 22px; margin-bottom:8px; }
+  .minute-summary div { display:flex; flex-direction:column; gap:2px; font-variant-numeric:tabular-nums; }
+  .minute-summary span { color:#94a3b8; font-size:11px; }
+  .minute-summary strong { color:#1e293b; font-size:14px; }
   .stats div { padding: 12px 10px; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
   .stats span { display: block; margin-bottom: 4px; color: #94a3b8; font-size: 12px; transition: color .15s ease; }
   .stats span.warn { color: #d97706 !important; font-weight: 700; }

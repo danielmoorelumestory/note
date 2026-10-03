@@ -535,6 +535,19 @@ async function cloudRequest(token: string, body?: unknown): Promise<CloudItem[]>
   return body ? [] : ((await response.json()).records ?? []) as CloudItem[];
 }
 
+export type MinuteBar = { ts: string; open: number; close: number; high: number; low: number; volume: number };
+
+/** 从云端读取已同步的 1 分钟线（Worker 每个交易日收盘后抓取）。from/to 为 YYYYMMDD，adjust 默认前复权。 */
+export async function fetchMinuteBars(code: string, from: string, to: string, adjust: 'qfq' | 'none' = 'qfq'): Promise<MinuteBar[]> {
+  const token = readSyncKey();
+  if (token.length < 16) throw new Error('请先在“已保存标的”页填写同步密钥。');
+  const response = await fetch(`${SYNC_ENDPOINT}/minute?code=${encodeURIComponent(code)}&from=${from}&to=${to}&adjust=${adjust}`, {
+    headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) throw new Error(response.status === 401 ? '同步密钥无效。' : '读取分钟线失败。');
+  return ((await response.json()).bars ?? []) as MinuteBar[];
+}
+
 /** 删除记录：写入删除标记（墓碑），同步时让其它设备上的同一记录也被删除，避免被云端旧数据“复活”。 */
 export function removeRecords(ids: string[]) {
   const now = new Date().toISOString(), deleted = readJson<Record<string, string>>(DELETED_KEY, {});

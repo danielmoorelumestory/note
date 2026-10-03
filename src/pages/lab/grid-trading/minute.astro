@@ -1,0 +1,104 @@
+---
+import Base from '../../../layouts/Base.astro';
+import { href } from '../../../lib/url';
+
+const savedUrl = href('lab/grid-trading/saved');
+---
+
+<Base title="分钟线" current="lab" description="查看云端已同步的 1 分钟线">
+  <header class="hero compact-hero">
+    <p class="kicker">MINUTE BARS</p>
+    <h1>分钟线</h1>
+    <p class="lede">云端每个交易日收盘后自动抓取已保存标的的 1 分钟线。密钥沿用“已保存标的”页的同步密钥；默认显示前复权价格。</p>
+  </header>
+  <div class="actions"><a class="btn-back" href={savedUrl}>← 返回已保存标的</a><span id="status" class="status" role="status"></span></div>
+
+  <section class="panel">
+    <div class="controls">
+      <label>标的 <select id="code"></select></label>
+      <label>日期 <select id="date"></select></label>
+      <label class="check"><input id="adjust" type="checkbox" checked> 前复权</label>
+    </div>
+    <div class="summary minute-summary" id="summary"></div>
+    <div class="chart-scroll"><svg id="minute-chart" viewBox="0 0 920 360" role="img" aria-label="分钟价格与成交量"></svg></div>
+  </section>
+</Base>
+
+<script>
+  import { readRecords, readSyncKey, fetchMinuteBars, marketToday, blockCopy, type MinuteBar } from '../../../lib/grid-trading';
+  import { renderMinuteChart, minuteSummaryHtml } from '../../../lib/minute-chart';
+
+  blockCopy();
+
+  const codeSelect = document.querySelector('#code') as HTMLSelectElement;
+  const dateSelect = document.querySelector('#date') as HTMLSelectElement;
+  const adjustBox = document.querySelector('#adjust') as HTMLInputElement;
+  const statusEl = document.querySelector('#status') as HTMLElement;
+  const summaryEl = document.querySelector('#summary') as HTMLElement;
+  const svg = document.querySelector('#minute-chart') as SVGSVGElement;
+
+  // 已加载的某标的最近一段分钟线，按日期分组；切换日期不重复请求。
+  let byDate = new Map<string, MinuteBar[]>();
+  let requestId = 0;
+
+  const dashed = (date: string) => `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
+  const daysAgo = (days: number) => { const day = new Date(`${marketToday()}T00:00:00Z`); day.setUTCDate(day.getUTCDate() - days); return day.toISOString().slice(0, 10).replaceAll('-', ''); };
+
+  function renderDay() {
+    const bars = byDate.get(dateSelect.value) ?? [];
+    renderMinuteChart(svg, bars);
+    summaryEl.innerHTML = minuteSummaryHtml(bars);
+  }
+
+  async function load() {
+    const code = codeSelect.value, id = ++requestId;
+    if (!code) { statusEl.textContent = '还没有已保存的标的，请先在计算器里保存。'; return; }
+    statusEl.textContent = '正在读取分钟线…';
+    try {
+      // 云端只保留抓取到的交易日；取最近 30 天内已有数据的日期供选择。
+      const bars = await fetchMinuteBars(code, daysAgo(30), daysAgo(-1), adjustBox.checked ? 'qfq' : 'none');
+      if (id !== requestId) return;
+      byDate = new Map();
+      for (const bar of bars) { const date = bar.ts.slice(0, 8); byDate.set(date, [...(byDate.get(date) ?? []), bar]); }
+      const dates = [...byDate.keys()].sort().reverse(), previous = dateSelect.value;
+      dateSelect.innerHTML = dates.map(date => `<option value="${date}">${dashed(date)}</option>`).join('');
+      if (dates.includes(previous)) dateSelect.value = previous;
+      statusEl.textContent = dates.length ? `已同步 ${dates.length} 个交易日（最近 30 天内）` : '最近 30 天内暂无该标的的分钟线，云端每个交易日收盘后（15:10）自动抓取。';
+      renderDay();
+    } catch (error) {
+      if (id !== requestId) return;
+      byDate = new Map(); dateSelect.innerHTML = ''; summaryEl.textContent = '';
+      statusEl.textContent = error instanceof Error ? error.message : '读取分钟线失败。';
+      renderMinuteChart(svg, []);
+    }
+  }
+
+  const codes = [...new Map(readRecords().map(item => [item.row.code, item.row.name || item.row.code])).entries()];
+  codeSelect.innerHTML = codes.map(([code, name]) => `<option value="${code}">${name} · ${code}</option>`).join('');
+  const wanted = new URLSearchParams(location.search).get('code');
+  if (wanted && codes.some(([code]) => code === wanted)) codeSelect.value = wanted;
+  codeSelect.addEventListener('change', () => void load());
+  adjustBox.addEventListener('change', () => void load());
+  dateSelect.addEventListener('change', renderDay);
+  new ResizeObserver(() => renderDay()).observe(svg.parentElement!);
+  if (!readSyncKey()) statusEl.textContent = '请先在“已保存标的”页填写同步密钥。';
+  else void load();
+</script>
+
+<style is:global>
+  .compact-hero { margin-bottom: 1.4rem; }
+  .actions { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; }
+  .btn-back { border: 1px solid #cbd5e1; border-radius: 7px; padding: 7px 13px; background: #fff; color: #475569; font-size: 13px; font-weight: 500; text-decoration: none; }
+  .btn-back:hover { border-color: #94a3b8; color: #0f172a; background: #f8fafc; }
+  .status { margin-left: auto; color: #94a3b8; font-size: 12px; }
+  .panel { padding: 18px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; }
+  .controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 14px; color: #475569; font-size: 13px; }
+  .controls label { display: flex; align-items: center; gap: 6px; }
+  .controls select { border: 1px solid #cbd5e1; border-radius: 6px; padding: 6px 8px; background: #fff; color: #334155; font-size: 13px; }
+  .summary { display: flex; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 8px; }
+  .minute-summary div { display: flex; flex-direction: column; gap: 2px; font-variant-numeric: tabular-nums; }
+  .minute-summary span { color: #94a3b8; font-size: 11px; }
+  .minute-summary strong { color: #1e293b; font-size: 14px; }
+  .chart-scroll { overflow-x: auto; }
+  .chart-scroll svg { display: block; width: 100%; height: auto; }
+</style>

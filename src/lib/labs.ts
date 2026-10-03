@@ -15,4 +15,9 @@ export const labs: Lab[] = [
     title: '网格列表',
     summary: '查看已保存的网格回测标的：当前状态、备份对比与成交明细。',
   },
+  {
+    slug: 'grid-trading/minute',
+    title: '分钟线',
+    summary: '查看云端每日自动同步的 1 分钟线：分时价格与成交量，支持前复权。',
+  },
 ];
