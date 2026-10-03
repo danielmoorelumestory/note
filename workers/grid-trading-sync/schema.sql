@@ -41,3 +41,21 @@ CREATE TABLE IF NOT EXISTS sync_log (
   error TEXT
 );
 CREATE INDEX IF NOT EXISTS sync_log_code_run ON sync_log (code, run_at);
+
+-- 日K（未复权）：收盘后不会再变，长期保存；前复权通过 daily_offsets 换算。date 为 YYYYMMDD，volume 单位为手。
+CREATE TABLE IF NOT EXISTS daily_bars (
+  code TEXT NOT NULL,
+  date TEXT NOT NULL,
+  open REAL NOT NULL,
+  close REAL NOT NULL,
+  high REAL NOT NULL,
+  low REAL NOT NULL,
+  volume REAL NOT NULL,
+  PRIMARY KEY (code, date)
+) WITHOUT ROWID;
+
+-- 每个标的日K 已回填到的起点（YYYY-MM-DD）。用来区分“标的上市较晚所以最早日K 晚于起点”与“还没回填过更早的数据”，避免每次都整段重抓。
+CREATE TABLE IF NOT EXISTS daily_meta (
+  code TEXT PRIMARY KEY,
+  backfilled_from TEXT NOT NULL
+);

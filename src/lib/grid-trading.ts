@@ -138,7 +138,7 @@ async function downloadCandles(code: string, from: string): Promise<Candle[]> {
 }
 
 /**
- * 读取某代码自 begin 起的前复权日线。按代码缓存，每个交易日只下载一次（前复权会因分红改写历史价格，
+ * 读取某代码自 begin 起的前复权日线。优先从云端读取（fetchDailyBars），云端不可用时直接下载腾讯日线。按代码缓存，每个交易日只获取一次（前复权会因分红改写历史价格，
  * 所以不做增量拼接）；同一代码的多条记录共享同一份缓存，并发请求合并为一次。
  */
 export async function getCandles(code: string, begin: string, { force = false } = {}): Promise<Candle[]> {
@@ -149,7 +149,7 @@ export async function getCandles(code: string, begin: string, { force = false } 
   const from = cached && cached.from < begin ? cached.from : begin;
   let request = candleRequests.get(key);
   if (!request) {
-    request = downloadCandles(code, from).then(candles => {
+    request = (fetchDailyBars(code.trim(), from).then(cloud => cloud ?? downloadCandles(code, from))).then(candles => {
       const entry = { fetchedOn: today, from, candles };
       if (candles.length) writeJson(key, entry);
       return entry;
@@ -533,6 +533,23 @@ async function cloudRequest(token: string, body?: unknown): Promise<CloudItem[]>
   });
   if (!response.ok) throw new Error(body ? '写入云端记录失败' : '读取云端记录失败');
   return body ? [] : ((await response.json()).records ?? []) as CloudItem[];
+}
+
+/**
+ * 从云端读取已保存的前复权日K（Worker 每个交易日收盘后更新）。返回 null 表示云端不可用或数据不能直接采用：
+ * 没有同步密钥、请求失败/超时、没有数据，或云端回填的起点晚于所需起点（说明还没回填到那么早）。
+ * 最早一根日K 晚于 from 本身不算问题——标的可能上市较晚，只要 coveredFrom 已覆盖 from 即可。
+ */
+async function fetchDailyBars(code: string, from: string): Promise<Candle[] | null> {
+  const token = readSyncKey();
+  if (token.length < 16) return null;
+  try {
+    const response = await fetch(`${SYNC_ENDPOINT}/daily?code=${encodeURIComponent(code)}&from=${from}&adjust=qfq`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) });
+    if (!response.ok) return null;
+    const payload = await response.json() as { coveredFrom: string | null; bars: { date: string; close: number; high: number; low: number }[] };
+    if (!payload.bars?.length || !payload.coveredFrom || payload.coveredFrom > from) return null;
+    return payload.bars.map(bar => ({ date: bar.date, close: bar.close, high: bar.high, low: bar.low }));
+  } catch { return null; }
 }
 
 export type MinuteBar = { ts: string; open: number; close: number; high: number; low: number; volume: number };
