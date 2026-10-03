@@ -257,6 +257,31 @@ async function readDailyBars(env: Env, owner: string, url: URL) {
   return json({ code, adjust: adjusted ? 'qfq' : 'none', coveredFrom: meta?.date ?? null, count: results.length, bars: results });
 }
 
+/**
+ * 近四年前复权最高/最低价：GET /daily/extremes?codes=601318,159901（一次最多 50 个）。
+ * 窗口为“今年及前四个自然年”（今年 2026 年则从 2022-01-01 起），前复权价 = 价格 − 当日偏移，最低价排除 ≤ 0 的值。
+ * 只返回该密钥名下已保存且已回填（有 daily_meta）的标的，不触发任何抓取或写入；其余标的不出现在结果里，由前端回退。
+ */
+async function readExtremes(env: Env, owner: string, url: URL) {
+  const requested = [...new Set((url.searchParams.get('codes') ?? '').split(',').map(code => code.trim()).filter(code => /^\d{6}$/.test(code)))].slice(0, 50);
+  const from = `${Number(beijingToday().slice(0, 4)) - 4}-01-01`;
+  const owned = new Set(await trackedCodes(env, owner));
+  const codes = requested.filter(code => owned.has(code));
+  if (!codes.length) return json({ window: { from }, extremes: {} });
+  const marks = codes.map(() => '?').join(',');
+  const { results } = await env.DB.prepare(
+    `SELECT b.code AS code, MAX(b.high - COALESCE(o.offset, 0)) AS high,
+            MIN(CASE WHEN b.low - COALESCE(o.offset, 0) > 0 THEN b.low - COALESCE(o.offset, 0) END) AS low, MAX(b.date) AS last
+     FROM daily_bars b LEFT JOIN daily_offsets o ON o.code = b.code AND o.date = b.date
+     WHERE b.code IN (${marks}) AND b.code IN (SELECT code FROM daily_meta) AND b.date >= ?
+     GROUP BY b.code`,
+  ).bind(...codes, compact(from)).all<{ code: string; high: number; low: number | null; last: string }>();
+  const extremes: Record<string, { high: number; low: number; to: string }> = {};
+  const tick = (value: number) => Math.round(value * 1000) / 1000; // 价格最小变动单位 0.001，去掉浮点减法的尾数
+  for (const row of results) if (row.low !== null) extremes[row.code] = { high: tick(row.high), low: tick(row.low), to: `${row.last.slice(0, 4)}-${row.last.slice(4, 6)}-${row.last.slice(6, 8)}` };
+  return json({ window: { from }, extremes });
+}
+
 export default {
   // 定时任务（见 wrangler.jsonc 的 triggers.crons）：每个交易日 15:10、16:00 与次日 09:00 抓取所有已保存标的的 1 分钟线。
   async scheduled(_controller, env) {
@@ -268,6 +293,7 @@ export default {
     if (!owner) return json({ error: '请提供至少 16 位同步密钥。' }, 401);
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/minute') return readMinuteBars(env, url);
+    if (request.method === 'GET' && url.pathname === '/daily/extremes') return readExtremes(env, owner, url);
     if (request.method === 'GET' && url.pathname === '/daily') return readDailyBars(env, owner, url);
     if (request.method === 'GET' && url.pathname === '/minute/status') return readMinuteStatus(env, url);
     // 手动补抓：只抓取该密钥名下已保存记录涉及的标的，与定时任务走同一流程。

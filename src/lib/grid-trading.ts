@@ -161,7 +161,7 @@ export async function getCandles(code: string, begin: string, { force = false } 
 }
 
 /**
- * 近四年（今年及前四个自然年，如 2026 年取 2022-01-01 起）的最高价与最低价，用于估算当前价离历史高低点还有多少格。
+ * 直连行情接口取近四年（今年及前四个自然年，如 2026 年取 2022-01-01 起）的最高价与最低价，用于估算当前价离历史高低点还有多少格。
  * 不下载日线：接口的年线只返回最新一根，改用月线（四年不到 60 根）取各月最高/最低；结果按代码缓存，每个交易日只查询一次。
  */
 export async function getFourYearExtremes(code: string): Promise<{ high: number; low: number } | undefined> {
@@ -550,6 +550,23 @@ async function fetchDailyBars(code: string, from: string): Promise<Candle[] | nu
     if (!payload.bars?.length || !payload.coveredFrom || payload.coveredFrom > from) return null;
     return payload.bars.map(bar => ({ date: bar.date, close: bar.close, high: bar.high, low: bar.low }));
   } catch { return null; }
+}
+
+/**
+ * 一次从云端读取多个标的的四年前复权最高/最低价（由云端日K 聚合）。没有同步密钥、请求失败/超时、或旧版 Worker 没有这个接口时返回空结果；
+ * 云端没有的标的（未回填、未保存）不在结果里，调用方对它们回退到 getFourYearExtremes 直连。
+ */
+export async function fetchCloudExtremes(codes: string[]): Promise<Map<string, { high: number; low: number }>> {
+  const result = new Map<string, { high: number; low: number }>();
+  const token = readSyncKey();
+  if (token.length < 16 || !codes.length) return result;
+  try {
+    const response = await fetch(`${SYNC_ENDPOINT}/daily/extremes?codes=${codes.join(',')}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15000) });
+    if (!response.ok) return result;
+    const payload = await response.json() as { extremes?: Record<string, { high: number; low: number }> };
+    for (const [code, range] of Object.entries(payload.extremes ?? {})) if (Number.isFinite(range.high) && Number.isFinite(range.low)) result.set(code, { high: range.high, low: range.low });
+  } catch { /* 云端不可用时由调用方回退直连 */ }
+  return result;
 }
 
 export type MinuteBar = { ts: string; open: number; close: number; high: number; low: number; volume: number };

@@ -27,7 +27,7 @@ const detailUrl = href('lab/grid-trading/detail');
   import {
     readRecords, writeRecords, saveRecord, refreshRecord, refreshRecords, removeRecords, syncAll, pushRecord, withParamChange,
     gridStatus, openingOf, formatMoney, formatPrice, tick, marketSessionOpen, marketToday, SYNC_KEY_STORAGE,
-    blockCopy, getFourYearExtremes,
+    blockCopy, getFourYearExtremes, fetchCloudExtremes,
     type SavedRecord,
   } from '../../../lib/grid-trading';
 
@@ -75,9 +75,14 @@ const detailUrl = href('lab/grid-trading/detail');
   };
   async function loadExtremes() {
     const codes = [...new Set(readRecords().map(item => item.row.code))].filter(code => !extremes.has(code));
-    for (const code of codes) {
+    const repaint = () => { if (!container.querySelector('.param-input.dirty')) render(); };
+    // 先一次读取云端结果（由云端日K 聚合），拿到的立即显示；云端没有的标的再逐个直连月K 兜底。
+    const cloud = await fetchCloudExtremes(codes);
+    for (const [code, range] of cloud) extremes.set(code, range);
+    if (cloud.size) repaint();
+    for (const code of codes.filter(code => !cloud.has(code))) {
       try { extremes.set(code, (await getFourYearExtremes(code)) ?? null); } catch { extremes.set(code, null); }
-      if (!container.querySelector('.param-input.dirty')) render();
+      repaint();
     }
   }
   const syncInput = document.querySelector('#sync-key') as HTMLInputElement;
