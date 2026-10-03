@@ -2,6 +2,8 @@
   "name": "grid-trading-sync",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-28",
+  // 北京时间 15:10（UTC 07:10），周一到周五；节假日抓到的是重复数据，会被主键去重。
+  "triggers": { "crons": ["10 7 * * 1-5"] },
   "d1_databases": [
     {
       "binding": "DB",
