@@ -78,10 +78,12 @@ async function upsertRows(env: Env, sql: string, code: string, rows: unknown[][]
 const writeDaily = (env: Env, code: string, bars: Map<string, DailyBar>) => upsertRows(env,
   `INSERT INTO daily_bars (code, date, open, close, high, low, volume)
    SELECT ?1, value->>0, value->>1, value->>2, value->>3, value->>4, value->>5 FROM json_each(?2) WHERE true
-   ON CONFLICT (code, date) DO UPDATE SET open = excluded.open, close = excluded.close, high = excluded.high, low = excluded.low, volume = excluded.volume`,
+   ON CONFLICT (code, date) DO UPDATE SET open = excluded.open, close = excluded.close, high = excluded.high, low = excluded.low, volume = excluded.volume
+   WHERE daily_bars.open IS NOT excluded.open OR daily_bars.close IS NOT excluded.close OR daily_bars.high IS NOT excluded.high OR daily_bars.low IS NOT excluded.low OR daily_bars.volume IS NOT excluded.volume`,
   code, [...bars].map(([date, bar]) => [compact(date), bar.open, bar.close, bar.high, bar.low, bar.volume]));
 const writeOffsets = (env: Env, code: string, offsets: Map<string, number>) => upsertRows(env,
-  'INSERT OR REPLACE INTO daily_offsets (code, date, offset) SELECT ?1, value->>0, value->>1 FROM json_each(?2)', code, [...offsets]);
+  `INSERT INTO daily_offsets (code, date, offset) SELECT ?1, value->>0, value->>1 FROM json_each(?2) WHERE true
+   ON CONFLICT (code, date) DO UPDATE SET offset = excluded.offset WHERE daily_offsets.offset IS NOT excluded.offset`, code, [...offsets]);
 
 /** 偏移 = 未复权收盘价 − 前复权收盘价（日期键为 YYYYMMDD，保留 6 位小数）。 */
 const offsetsOf = (raw: Map<string, { close: number }>, adjusted: Map<string, { close: number }>) =>
@@ -130,7 +132,7 @@ async function syncDaily(env: Env, code: string, budget: Budget) {
 /**
  * 抓取并保存某个标的的 1 分钟线。接口一次最多返回最近 640 根（约 2.7 个交易日），所以每个交易日多次抓取、窗口互相重叠，
  * 单次失败会被后一次补上。用一条 INSERT ... json_each ... ON CONFLICT DO UPDATE 批量写入：同一分钟后抓到的值覆盖先前的值
- * （盘中抓到的最后一根可能还没走完），不会产生重复行。
+ * （盘中抓到的最后一根可能还没走完），不会产生重复行；只有值真的变了才写入（D1 免费版每天最多写 10 万行，重复写同样的值也算）。
  */
 async function syncMinuteBars(env: Env, code: string) {
   const symbol = symbolOf(code);
@@ -143,7 +145,8 @@ async function syncMinuteBars(env: Env, code: string) {
   await env.DB.prepare(
     `INSERT INTO minute_bars (code, ts, open, close, high, low, volume)
      SELECT ?1, value->>0, value->>1, value->>2, value->>3, value->>4, value->>5 FROM json_each(?2) WHERE true
-     ON CONFLICT (code, ts) DO UPDATE SET open = excluded.open, close = excluded.close, high = excluded.high, low = excluded.low, volume = excluded.volume`,
+     ON CONFLICT (code, ts) DO UPDATE SET open = excluded.open, close = excluded.close, high = excluded.high, low = excluded.low, volume = excluded.volume
+     WHERE minute_bars.open IS NOT excluded.open OR minute_bars.close IS NOT excluded.close OR minute_bars.high IS NOT excluded.high OR minute_bars.low IS NOT excluded.low OR minute_bars.volume IS NOT excluded.volume`,
   ).bind(code, JSON.stringify(bars)).run();
   return { fetched: bars.length, firstTs: bars[0][0] as string, lastTs: bars.at(-1)![0] as string };
 }
@@ -308,11 +311,23 @@ export default {
       const records = body.records.filter((record): record is { id: string } => typeof record === 'object' && record !== null && typeof (record as { id?: unknown }).id === 'string');
       if (records.length !== body.records.length) return json({ error: '记录缺少 id。' }, 400);
       const now = Date.now();
-      await env.DB.batch([
-        env.DB.prepare('DELETE FROM records WHERE owner_hash = ?').bind(owner),
-        ...records.map(record => env.DB.prepare('INSERT INTO records (owner_hash, record_id, payload, updated_at) VALUES (?, ?, ?, ?)').bind(owner, record.id, JSON.stringify(record), now)),
-      ]);
-      return json({ records: records.length, updatedAt: now });
+      // 按记录 upsert：只有传入版本的更新时间（缺省用保存时间）不早于云端现有版本才写入，较旧的被忽略；不再整表删除，
+      // 避免另一台设备刚写入的新版本被一次过期的整份上传覆盖。ISO 时间字符串的字典序即时间先后，相等时覆盖（幂等）。
+      const version = (column: string) => `COALESCE(json_extract(${column}, '$.updatedAt'), json_extract(${column}, '$.savedAt'), '')`;
+      const upsert = `INSERT INTO records (owner_hash, record_id, payload, updated_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT (owner_hash, record_id) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at
+        WHERE ${version('excluded.payload')} >= ${version('records.payload')}`;
+      try {
+        const results = records.length ? await env.DB.batch(records.map(record => env.DB.prepare(upsert).bind(owner, record.id, JSON.stringify(record), now))) : [];
+        const skipped = records.filter((_, index) => results[index].meta.changes === 0).map(record => record.id);
+        // 墓碑（删除标记）客户端只保留 180 天，之后不再上传；服务端同样在写入后清理过期的，避免永久残留。
+        const expired = new Date(now - 180 * 24 * 3600_000).toISOString();
+        await env.DB.prepare("DELETE FROM records WHERE owner_hash = ? AND json_extract(payload, '$.deleted') = 1 AND " + version('payload') + ' < ?').bind(owner, expired).run();
+        return json({ records: records.length, updatedAt: now, skipped });
+      } catch (error) {
+        console.error('写入记录失败', error);
+        return json({ error: `写入记录失败：${error instanceof Error ? error.message : String(error)}` }, 500);
+      }
     }
     return json({ error: '不支持的请求方法。' }, 405);
   },

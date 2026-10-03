@@ -103,8 +103,21 @@ export const formatPercent = (value: number) => `${value >= 0 ? '+' : ''}${(valu
 function readJson<T>(key: string, fallback: T, storage: Storage = localStorage): T {
   try { const raw = storage.getItem(key); return raw ? JSON.parse(raw) as T : fallback; } catch { return fallback; }
 }
+/**
+ * 清理所有可重新生成的缓存（日K、四年高低、报价），腾出浏览器存储额度。回测记录、同步密钥和删除标记不在清理范围内。
+ */
+export function evictCaches() {
+  try {
+    for (const key of Object.keys(localStorage)) if (key.startsWith(CANDLE_CACHE_PREFIX) || key.startsWith(EXTREMES_CACHE_PREFIX)) localStorage.removeItem(key);
+    sessionStorage.removeItem(QUOTE_CACHE_KEY);
+  } catch { /* 存储不可用时无事可做 */ }
+}
+/** 写入失败（多半是额度已满）时先清理缓存再重试一次，仍失败就放弃——调用方写的多是缓存，不影响正确性。 */
 function writeJson(key: string, value: unknown, storage: Storage = localStorage) {
-  try { storage.setItem(key, JSON.stringify(value)); } catch { /* 存储已满或不可用时放弃缓存 */ }
+  const text = JSON.stringify(value);
+  try { storage.setItem(key, text); return; } catch { /* 额度不足或存储不可用 */ }
+  evictCaches();
+  try { storage.setItem(key, text); } catch { /* 放弃本次缓存 */ }
 }
 
 // ---------- 行情：日线缓存 + 批量实时报价 ----------
@@ -495,7 +508,11 @@ export function gridStatus(record: SavedRecord): GridStatus | null {
 // ---------- 记录存储 ----------
 
 export const readRecords = () => readJson<SavedRecord[]>(RECORDS_KEY, []);
-export const writeRecords = (records: SavedRecord[]) => localStorage.setItem(RECORDS_KEY, JSON.stringify(records));
+/** 保存回测记录：记录优先于缓存，额度已满时先清理缓存再重试一次；仍失败则抛出，由调用方处理，不静默丢数据。 */
+export const writeRecords = (records: SavedRecord[]) => {
+  const text = JSON.stringify(records);
+  try { localStorage.setItem(RECORDS_KEY, text); } catch { evictCaches(); localStorage.setItem(RECORDS_KEY, text); }
+};
 /** 只替换指定记录，读取最新列表后再写，避免覆盖其它页面同时做的修改。 */
 export function saveRecord(record: SavedRecord) {
   const records = readRecords();
