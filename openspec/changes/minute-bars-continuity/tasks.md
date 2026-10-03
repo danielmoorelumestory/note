@@ -26,4 +26,4 @@
 
 - [x] 5.1 执行 `wrangler d1 execute` 建表并 `wrangler deploy` 部署 Worker
 - [x] 5.2 手动补抓一次，确认 `sync_log` 有记录、`/minute/status` 返回正常
-- [ ] 5.3 提交并推送改动
+- [x] 5.3 提交并推送改动
