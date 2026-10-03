@@ -14,9 +14,12 @@ async function ownerHash(request: Request) {
 
 const symbolOf = (code: string) => `${/^[569]/.test(code) ? 'sh' : 'sz'}${code}`;
 
-/** 已保存记录里出现过的所有标的代码（去重）。 */
-async function trackedCodes(env: Env) {
-  const { results } = await env.DB.prepare("SELECT DISTINCT json_extract(payload, '$.row.code') AS code FROM records").all<{ code: string | null }>();
+/** 已保存记录里出现过的标的代码（去重）。传入 owner 时只取该密钥名下的记录，否则取全部（定时任务用）。 */
+async function trackedCodes(env: Env, owner?: string) {
+  const statement = owner
+    ? env.DB.prepare("SELECT DISTINCT json_extract(payload, '$.row.code') AS code FROM records WHERE owner_hash = ?").bind(owner)
+    : env.DB.prepare("SELECT DISTINCT json_extract(payload, '$.row.code') AS code FROM records");
+  const { results } = await statement.all<{ code: string | null }>();
   return results.map(row => row.code?.trim() ?? '').filter(code => /^\d{6}$/.test(code));
 }
 
@@ -52,8 +55,9 @@ async function syncOffsets(env: Env, code: string) {
 }
 
 /**
- * 抓取并保存某个标的的 1 分钟线。接口一次最多返回最近 640 根（约 3 个交易日），所以每个交易日收盘后跑一次即可连续覆盖，
- * 偶尔漏跑一两天也会被后一次补上。用一条 INSERT OR IGNORE ... json_each 批量写入，重复数据自动跳过。
+ * 抓取并保存某个标的的 1 分钟线。接口一次最多返回最近 640 根（约 2.7 个交易日），所以每个交易日多次抓取、窗口互相重叠，
+ * 单次失败会被后一次补上。用一条 INSERT ... json_each ... ON CONFLICT DO UPDATE 批量写入：同一分钟后抓到的值覆盖先前的值
+ * （盘中抓到的最后一根可能还没走完），不会产生重复行。
  */
 async function syncMinuteBars(env: Env, code: string) {
   const symbol = symbolOf(code);
@@ -62,12 +66,65 @@ async function syncMinuteBars(env: Env, code: string) {
   const payload = await response.json<{ data?: Record<string, { m1?: unknown[][] }> }>();
   const bars = (payload.data?.[symbol]?.m1 ?? []).map(bar => [String(bar[0]), Number(bar[1]), Number(bar[2]), Number(bar[3]), Number(bar[4]), Number(bar[5])])
     .filter(bar => /^\d{12}$/.test(bar[0] as string) && bar.slice(1).every(value => Number.isFinite(value)));
-  if (!bars.length) return 0;
+  if (!bars.length) return { fetched: 0, firstTs: null, lastTs: null };
   await env.DB.prepare(
-    `INSERT OR IGNORE INTO minute_bars (code, ts, open, close, high, low, volume)
-     SELECT ?1, value->>0, value->>1, value->>2, value->>3, value->>4, value->>5 FROM json_each(?2)`,
+    `INSERT INTO minute_bars (code, ts, open, close, high, low, volume)
+     SELECT ?1, value->>0, value->>1, value->>2, value->>3, value->>4, value->>5 FROM json_each(?2) WHERE true
+     ON CONFLICT (code, ts) DO UPDATE SET open = excluded.open, close = excluded.close, high = excluded.high, low = excluded.low, volume = excluded.volume`,
   ).bind(code, JSON.stringify(bars)).run();
-  return bars.length;
+  return { fetched: bars.length, firstTs: bars[0][0] as string, lastTs: bars.at(-1)![0] as string };
+}
+
+/**
+ * 一次完整的抓取流程（定时任务与手动补抓共用）：逐个标的抓分钟线、更新前复权偏移，并为每个标的写一条 sync_log。
+ * 单个标的失败只记日志，不影响其余标的。偏移更新失败不算抓取失败（分钟线已入库），只在日志的 error 里注明。
+ */
+async function runSync(env: Env, trigger: 'cron' | 'manual', codes: string[]) {
+  const runAt = Date.now(), summary = { ok: 0, failed: 0 };
+  for (const code of codes) {
+    let result = { fetched: 0, firstTs: null as string | null, lastTs: null as string | null }, ok = 1, error: string | null = null;
+    try {
+      result = await syncMinuteBars(env, code);
+      try { await syncOffsets(env, code); } catch (offsetError) { error = `偏移更新失败：${offsetError instanceof Error ? offsetError.message : String(offsetError)}`; }
+    } catch (fetchError) {
+      ok = 0; error = fetchError instanceof Error ? fetchError.message : String(fetchError);
+      console.error('分钟线抓取失败', code, fetchError);
+    }
+    summary[ok ? 'ok' : 'failed']++;
+    try {
+      await env.DB.prepare('INSERT INTO sync_log (run_at, trigger, code, ok, fetched, first_ts, last_ts, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+        .bind(runAt, trigger, code, ok, result.fetched, result.firstTs, result.lastTs, error).run();
+    } catch (logError) { console.error('写入 sync_log 失败', code, logError); }
+  }
+  return { runAt, trigger, codes: codes.length, ...summary };
+}
+
+const FULL_DAY_BARS = 241; // 9:30—11:30、13:00—15:00，含 9:30 与 15:00 两端各一根
+const STALE_AFTER_MS = 4 * 24 * 3600_000; // 连续超过 4 天没有成功抓取，认为定时任务异常（周末加休市不会误报：休市期间抓取仍然成功）
+
+/**
+ * 分钟线健康状态：GET /minute/status?code=510300。
+ * - gaps：最近 30 天内、已收盘的交易日（以日K 偏移表为准）里分钟线不足 241 根的日期。最早一天的分钟线从抓取窗口中途开始，天然不完整，不判为缺口；
+ *   当天 15:10 前尚未收盘也不判。停牌日也会出现在这里，由前端提示“可能为停牌”。
+ * - lastSuccessAt / lastFailure：来自 sync_log；stale：超过 4 天没有成功抓取。
+ */
+async function readMinuteStatus(env: Env, url: URL) {
+  const code = url.searchParams.get('code') ?? '';
+  if (!/^\d{6}$/.test(code)) return json({ error: '请提供 6 位标的代码 code。' }, 400);
+  const now = new Date(Date.now() + 8 * 3600_000), today = now.toISOString().slice(0, 10).replaceAll('-', '');
+  const closed = now.getUTCHours() * 60 + now.getUTCMinutes() >= 15 * 60 + 10;
+  const lastDay = closed ? today : new Date(now.getTime() - 24 * 3600_000).toISOString().slice(0, 10).replaceAll('-', '');
+  const since = new Date(now.getTime() - 30 * 24 * 3600_000).toISOString().slice(0, 10).replaceAll('-', '');
+  const earliest = await env.DB.prepare('SELECT MIN(substr(ts, 1, 8)) AS day FROM minute_bars WHERE code = ?').bind(code).first<{ day: string | null }>();
+  const { results: gaps } = earliest?.day ? await env.DB.prepare(
+    `SELECT o.date AS date, COALESCE(c.n, 0) AS bars, ?5 - COALESCE(c.n, 0) AS missing
+     FROM daily_offsets o LEFT JOIN (SELECT substr(ts, 1, 8) AS d, COUNT(*) AS n FROM minute_bars WHERE code = ?1 GROUP BY d) c ON c.d = o.date
+     WHERE o.code = ?1 AND o.date >= ?2 AND o.date > ?3 AND o.date <= ?4 AND COALESCE(c.n, 0) < ?5 ORDER BY o.date`,
+  ).bind(code, since, earliest.day, lastDay, FULL_DAY_BARS).all<{ date: string; bars: number; missing: number }>() : { results: [] };
+  const success = await env.DB.prepare('SELECT MAX(run_at) AS at FROM sync_log WHERE code = ? AND ok = 1').bind(code).first<{ at: number | null }>();
+  const failure = await env.DB.prepare('SELECT run_at AS at, error FROM sync_log WHERE code = ? AND ok = 0 ORDER BY run_at DESC LIMIT 1').bind(code).first<{ at: number; error: string | null }>();
+  const lastSuccessAt = success?.at ?? null;
+  return json({ code, lastSuccessAt, lastFailure: failure ?? null, stale: lastSuccessAt !== null && Date.now() - lastSuccessAt > STALE_AFTER_MS, gaps });
 }
 
 /** 读取分钟线：GET /minute?code=510300&from=20260929&to=20261002&adjust=qfq（from/to 为 YYYYMMDD，含两端，可省略）。 */
@@ -88,17 +145,19 @@ async function readMinuteBars(env: Env, url: URL) {
 }
 
 export default {
-  // 定时任务（见 wrangler.jsonc 的 triggers.crons）：每个交易日收盘后抓取所有已保存标的的 1 分钟线。
+  // 定时任务（见 wrangler.jsonc 的 triggers.crons）：每个交易日 15:10、16:00 与次日 09:00 抓取所有已保存标的的 1 分钟线。
   async scheduled(_controller, env) {
-    for (const code of await trackedCodes(env)) {
-      try { await syncMinuteBars(env, code); await syncOffsets(env, code); } catch (error) { console.error('分钟线抓取失败', code, error); }
-    }
+    await runSync(env, 'cron', await trackedCodes(env));
   },
   async fetch(request, env): Promise<Response> {
-    if (request.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, PUT, OPTIONS', 'access-control-allow-headers': 'authorization, content-type' } });
+    if (request.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, PUT, POST, OPTIONS', 'access-control-allow-headers': 'authorization, content-type' } });
     const owner = await ownerHash(request);
     if (!owner) return json({ error: '请提供至少 16 位同步密钥。' }, 401);
-    if (request.method === 'GET' && new URL(request.url).pathname === '/minute') return readMinuteBars(env, new URL(request.url));
+    const url = new URL(request.url);
+    if (request.method === 'GET' && url.pathname === '/minute') return readMinuteBars(env, url);
+    if (request.method === 'GET' && url.pathname === '/minute/status') return readMinuteStatus(env, url);
+    // 手动补抓：只抓取该密钥名下已保存记录涉及的标的，与定时任务走同一流程。
+    if (request.method === 'POST' && url.pathname === '/minute/sync') return json(await runSync(env, 'manual', await trackedCodes(env, owner)));
     if (request.method === 'GET') {
       const { results } = await env.DB.prepare('SELECT payload FROM records WHERE owner_hash = ? ORDER BY updated_at DESC').bind(owner).all<{ payload: string }>();
       return json({ records: results.map(row => JSON.parse(row.payload)) });

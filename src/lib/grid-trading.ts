@@ -548,6 +548,20 @@ export async function fetchMinuteBars(code: string, from: string, to: string, ad
   return ((await response.json()).bars ?? []) as MinuteBar[];
 }
 
+export type MinuteStatus = {
+  lastSuccessAt: number | null; lastFailure: { at: number; error: string | null } | null; stale: boolean;
+  gaps: { date: string; bars: number; missing: number }[];
+};
+
+/** 读取分钟线健康状态：最近成功/失败的抓取、是否长时间没有成功抓取，以及最近 30 天内的缺口日期。 */
+export async function fetchMinuteStatus(code: string): Promise<MinuteStatus> {
+  const token = readSyncKey();
+  if (token.length < 16) throw new Error('缺少同步密钥');
+  const response = await fetch(`${SYNC_ENDPOINT}/minute/status?code=${encodeURIComponent(code)}`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000) });
+  if (!response.ok) throw new Error('读取分钟线状态失败');
+  return await response.json() as MinuteStatus;
+}
+
 /** 删除记录：写入删除标记（墓碑），同步时让其它设备上的同一记录也被删除，避免被云端旧数据“复活”。 */
 export function removeRecords(ids: string[]) {
   const now = new Date().toISOString(), deleted = readJson<Record<string, string>>(DELETED_KEY, {});

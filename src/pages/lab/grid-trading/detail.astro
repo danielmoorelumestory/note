@@ -18,6 +18,7 @@ const savedUrl = href('lab/grid-trading/saved');
       <div><h2>分钟线</h2><p id="minute-status">云端每个交易日收盘后自动抓取 1 分钟线，需要已填写同步密钥。</p></div>
       <div class="minute-controls"><label>日期 <select id="minute-date"></select></label><label class="minute-check"><input id="minute-adjust" type="checkbox" checked> 前复权</label></div>
     </div>
+    <p class="minute-alert" id="minute-alert" hidden></p>
     <div class="minute-summary" id="minute-summary"></div>
     <div class="chart-scroll"><svg id="minute-chart" viewBox="0 0 920 360" role="img" aria-label="分钟价格与成交量"></svg></div>
   </section>
@@ -57,7 +58,7 @@ const savedUrl = href('lab/grid-trading/saved');
   import {
     calculateGrid, adjustmentsOf, getCandles, fetchQuotes, mergeQuote, refreshRecord, readRecords, saveRecord, pushRecord,
     renderEquityChart, renderCompareChart, holdingValue, openingOf, createBackup, replayBackup, refreshBackupSnapshot, upgradeBackup, formatMoney, formatAmount, formatPercent, tick,
-    blockCopy, fetchMinuteBars, readSyncKey, marketToday, type MinuteBar,
+    blockCopy, fetchMinuteBars, fetchMinuteStatus, readSyncKey, marketToday, type MinuteBar,
     type SavedRecord, type Trade, type Adjustments, type GridResult, type Backup, type CompareMetric, type EquityPoint,
   } from '../../../lib/grid-trading';
   import { renderMinuteChart, minuteSummaryHtml } from '../../../lib/minute-chart';
@@ -95,6 +96,20 @@ const savedUrl = href('lab/grid-trading/saved');
   const minuteStatus = document.querySelector('#minute-status') as HTMLElement;
   let minuteByDate = new Map<string, MinuteBar[]>(), minuteCode = '', minuteRequest = 0;
   const minuteDaysAgo = (days: number) => { const day = new Date(`${marketToday()}T00:00:00Z`); day.setUTCDate(day.getUTCDate() - days); return day.toISOString().slice(0, 10).replaceAll('-', ''); };
+  // 缺口提示：有缺口、或云端长时间没有成功抓取时显示一行；读取状态失败时静默，不影响图表。
+  async function loadMinuteAlert(code: string, id: number) {
+    const alertEl = document.querySelector('#minute-alert') as HTMLElement;
+    alertEl.hidden = true; alertEl.textContent = '';
+    try {
+      const status = await fetchMinuteStatus(code);
+      if (id !== minuteRequest) return;
+      const dateText = (date: string) => `${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}`;
+      const parts: string[] = [];
+      if (status.gaps.length) parts.push(`分钟线缺失：${status.gaps.slice(0, 3).map(gap => `${dateText(gap.date)} 缺 ${gap.missing} 根`).join('、')}${status.gaps.length > 3 ? ` 等共 ${status.gaps.length} 天` : ''}（停牌日也会如此显示）`);
+      if (status.stale) parts.push('云端已超过 4 天没有成功抓取分钟线，请检查 Worker 定时任务');
+      alertEl.textContent = parts.join('；'); alertEl.hidden = !parts.length;
+    } catch { /* 状态不可用时不提示 */ }
+  }
   function renderMinuteDay() {
     const bars = minuteByDate.get(minuteDate.value) ?? [];
     renderMinuteChart(minuteSvg, bars);
@@ -114,6 +129,7 @@ const savedUrl = href('lab/grid-trading/saved');
       const dates = [...minuteByDate.keys()].sort().reverse(), previous = minuteDate.value;
       minuteDate.innerHTML = dates.map(date => `<option value="${date}">${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}</option>`).join('');
       if (dates.includes(previous)) minuteDate.value = previous;
+      void loadMinuteAlert(code, id);
       minuteStatus.textContent = dates.length ? `已同步 ${dates.length} 个交易日（最近 30 天内）` : '最近 30 天内暂无该标的的分钟线；云端每个交易日收盘后（15:10）自动抓取。';
       renderMinuteDay();
     } catch (error) {
@@ -551,6 +567,8 @@ const savedUrl = href('lab/grid-trading/saved');
   .minute-controls { display:flex; align-items:center; gap:14px; color:#475569; font-size:13px; }
   .minute-controls label { display:flex; align-items:center; gap:6px; }
   .minute-controls select { border:1px solid #cbd5e1; border-radius:6px; padding:5px 8px; background:#fff; color:#334155; font-size:13px; }
+  .minute-alert { margin:0 0 10px; padding:7px 10px; border:1px solid #fde68a; border-radius:7px; background:#fffbeb; color:#92400e; font-size:12px; }
+  .minute-alert[hidden] { display:none; }
   .minute-summary { display:flex; flex-wrap:wrap; gap:8px 22px; margin-bottom:8px; }
   .minute-summary div { display:flex; flex-direction:column; gap:2px; font-variant-numeric:tabular-nums; }
   .minute-summary span { color:#94a3b8; font-size:11px; }

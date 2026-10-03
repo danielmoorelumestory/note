@@ -26,3 +26,18 @@ CREATE TABLE IF NOT EXISTS daily_offsets (
   offset REAL NOT NULL,
   PRIMARY KEY (code, date)
 ) WITHOUT ROWID;
+
+-- 分钟线抓取日志：每次运行（定时 cron 或手动 manual）、每个标的一行。ok=0 表示抓取失败，error 为原因；
+-- ok=1 且 error 非空表示分钟线已入库但前复权偏移更新失败。run_at 为毫秒时间戳。
+CREATE TABLE IF NOT EXISTS sync_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_at INTEGER NOT NULL,
+  trigger TEXT NOT NULL,
+  code TEXT NOT NULL,
+  ok INTEGER NOT NULL,
+  fetched INTEGER NOT NULL DEFAULT 0,
+  first_ts TEXT,
+  last_ts TEXT,
+  error TEXT
+);
+CREATE INDEX IF NOT EXISTS sync_log_code_run ON sync_log (code, run_at);
