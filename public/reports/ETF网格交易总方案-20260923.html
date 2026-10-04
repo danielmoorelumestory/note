@@ -1,0 +1,863 @@
+<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ETF网格交易总方案（含逐只绝对价格网格）｜2026-09-23</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>:root{--ink:#172534;--sub:#5c6b7b;--navy:#163e68;--blue:#2675b9;--line:#dbe5ee;--bg:#f4f7fa;--paper:#fff;--red:#bf3f42;--green:#25845c;--amber:#ac7414;--softblue:#edf6ff;--softred:#fff2f1;--softgreen:#edf8f2;--softamber:#fff8e9}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;line-height:1.66}.wrap{max-width:1240px;margin:auto;padding:28px 20px 64px}.hero{color:#fff;background:linear-gradient(130deg,#123955,#2878b4);padding:32px 36px;border-radius:16px}.hero h1{font-size:29px;line-height:1.25;margin:8px 0}.hero p{margin:0;color:#e6f2fc}.tag{display:inline-block;border:1px solid #b7d7eb;border-radius:16px;padding:2px 9px;font-size:12px;margin-right:6px}.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:16px 0}.kpi,section{background:var(--paper);border:1px solid var(--line);border-radius:13px}.kpi{padding:14px 16px}.kpi strong{display:block;color:var(--navy);font-size:21px}.kpi span,.small,.src{font-size:12px;color:var(--sub)}section{padding:24px 28px;margin-top:16px}h2{font-size:20px;color:var(--navy);border-left:4px solid var(--blue);padding-left:10px;margin:0 0 12px}h3{font-size:17px;color:#234d72;margin:18px 0 8px}h4{font-size:14px;color:#234d72;margin:13px 0 6px}.lead{font-size:16px;color:#334b61}.note{padding:14px 16px;border-radius:8px;margin:12px 0}.blue{background:var(--softblue);border-left:4px solid var(--blue)}.red{background:var(--softred);border-left:4px solid var(--red)}.green{background:var(--softgreen);border-left:4px solid var(--green)}.amber{background:var(--softamber);border-left:4px solid var(--amber)}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;margin:10px 0;font-size:13px}th,td{border:1px solid var(--line);padding:8px 9px;text-align:left;vertical-align:top}th{background:#eaf2f9;color:#264e70;white-space:nowrap}.n{white-space:nowrap;text-align:right}code{background:#f0f5fa;padding:1px 5px;border-radius:4px;font-size:12px}.etf{border:1px solid var(--line);border-radius:11px;padding:18px 20px;margin:16px 0;background:#fff}.etf h3{margin-top:0;border-bottom:1px solid var(--line);padding-bottom:8px}.lad{font-size:13px}.lad span{display:inline-block;border:1px solid var(--line);border-radius:5px;padding:2px 7px;margin:3px 4px 3px 0}.lad .dn span{background:#fff7f6;border-color:#f2cfcb}.lad .up span{background:#f2f9ff;border-color:#c9e0f2}.foot{font-size:13px;color:var(--sub);padding:20px 2px}ol,ul{margin:8px 0;padding-left:22px}li{margin:5px 0}.pill{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:700}.ok{background:#e7f5ee;color:#1e7a53}.wait{background:#fdf3e2;color:#96660d}.stop{background:#fbeceb;color:#a8332f}@media(max-width:760px){.kpis{grid-template-columns:1fr 1fr}.hero{padding:24px}section{padding:20px 17px}}@media(max-width:480px){.kpis{grid-template-columns:1fr}}</style></head><body><main class="wrap">
+<header class="hero"><span class="tag">总方案</span><span class="tag">17只逐只参数</span><span class="tag">方案B统一步长</span><span class="tag">价格基准 2026-09-23 收盘</span><h1>ETF网格交易总方案<br><span style="font-size:19px;font-weight:400">配置框架 ＋ 风险预算 ＋ 逐只绝对价格网格 ＋ 执行纪律</span></h1><p>本文件是两份方案文档的合并版：上层为风格配置与账户风险预算，中层为 17 只 ETF 的最大浮动范围与统一步长下的绝对价格边界，底层为订单、信号灯与市况调整规则。所有浮动范围同时以百分比（风险口径）与元（执行口径）给出。</p></header>
+<div class="kpis">
+<div class="kpi"><strong>17只</strong><span>逐只给出范围、档位、前提与风险</span></div>
+<div class="kpi"><strong>2只</strong><span>长期常开主网格：563360、510500</span></div>
+<div class="kpi"><strong>0.001元</strong><span>统一最小价格变动单位（步长取整基准）</span></div>
+<div class="kpi"><strong>≤30%—40%</strong><span>全部自动网格最大已成交仓位上限</span></div>
+</div>
+<section><h2>一、定位与适用前提</h2><p class="lead">本方案的定位是“战略权益配置 + 有限网格交易”，不是“全部权益仓位的全面网格”。网格只服务于少数高流动、均值回归特征更强的标的；其余 ETF 负责风格暴露、久期对冲与季度再平衡。</p>
+<div class="note blue"><b>核心原则：先控制最大风险暴露，再捕捉区间波动。</b>网格是路径管理工具，不是预测工具。它不能挽救已被证伪的行业逻辑，也不应在单边趋势中机械“越跌越买”。</div>
+<div class="scroll"><table><thead><tr><th>适用</th><th>不适用或需显著降仓</th><th>原因</th></tr></thead><tbody>
+<tr><td>宽基、代表性行业、流动性稳定的普通现货ETF</td><td>杠杆/反向ETF、单一事件型主题、频繁变更指数逻辑的产品</td><td>后者可能发生结构性中枢下移或复利损耗，均值回归假设更弱。</td></tr>
+<tr><td>中性震荡、温和上行、上升趋势中的回撤</td><td>放量破位、连续急跌、广度恶化的风险释放阶段</td><td>网格在趋势下跌中会不断消耗现金并提高风险资产暴露。</td></tr>
+<tr><td>可接受持有一个完整市场周期的底仓</td><td>只能容忍短期波动、需精确止盈的资金</td><td>底仓的功能是保留上涨参与权，不应被网格卖光。</td></tr>
+</tbody></table></div>
+<div class="note red"><b>不满足以下任一条件，建议不建网：</b>资金短期要用；无法接受下沿全部成交后的账面回撤；标的是杠杆/反向产品、过窄题材或成交长期清淡的ETF；把“回本”而非指数长期价值作为持有理由；没有时间按周检查订单和现金。</div></section>
+<section><h2>二、风格配置：把权益仓切成“底仓—网格—战术”三本账</h2>
+<p>配置的风格覆盖方向为：<b>A500 约21%、中证500约6%、创业板7%、科创50 5%、红利低波4%、医疗3%、证券2%</b>，其余由银行、黄金、十年国债及有色、消费、通信、军工、机器人、港股创新药、恒生科技等构成。该结构总体合理，但不应把全部目标权重理解为全部进入网格订单的资金。</p>
+<div class="scroll"><table><thead><tr><th>资金账户</th><th>建议占总资产</th><th>配置/用途</th><th>执行边界</th></tr></thead><tbody>
+<tr><td>战略底仓</td><td class="n">50%—56%</td><td>A500 18%—20%、红利低波4%、银行4%—5%、黄金5%、十年国债7%，以及医疗、消费、有色等低频配置。</td><td>不做频繁网格；仅季度再平衡或偏离目标权重±25%时调整。</td></tr>
+<tr><td>核心网格资金</td><td class="n">16%—20%</td><td>A500 10%—12% + 中证500 6%—8%。</td><td>两只合计上限20%；每只预留至少40%未成交现金给下方网格。</td></tr>
+<tr><td>成长条件网格</td><td class="n">8%—10%</td><td>创业板、科创50、证券ETF三选二；科技高相关组合总计不超10%。</td><td>单只≤4%—5%，未满足趋势过滤则为0。</td></tr>
+<tr><td>战术卫星</td><td class="n">4%—6%</td><td>通信、港股创新药、恒生科技、有色中一次选择1—2只。</td><td>单只≤3%，同主题只保留一个交易标的。</td></tr>
+<tr><td>机动现金</td><td class="n">10%—14%</td><td>专用于补网、极端日再平衡及错配缓冲。</td><td>不被普通底仓占用；当权益趋势走弱时优先升至14%—18%。</td></tr>
+</tbody></table></div>
+<div class="note amber"><b>反向观点：增加科创50并不等于补足独立科技因子。</b>组合中的科创50、创业板、通信、机器人、恒生科技，在风险偏好收缩或成长估值压缩时可能同跌。应把<b>成长/科技同向风险</b>设为组合维度上限，而不是只限制单只比例——战略权重合计建议不超过21%—23%，其中进入自动网格的资金不超过10%。</div></section>
+<section><h2>三、标的核验、分层与准入标准</h2>
+<p>17只ETF的产品身份与跟踪对象已核验：513120、513130为跨境ETF，518880为黄金商品ETF，511260为债券ETF。除上述四只可T+0外，其余股票ETF为T+1，意味着下跌日买入的仓位不能在当日卖出，不能按“日内双向网格”假设设计。</p>
+<div class="scroll"><table><thead><tr><th>层级</th><th>标的</th><th>判断</th><th>动作</th></tr></thead><tbody>
+<tr><td>核心网格</td><td>563360 A500、510500 中证500</td><td>流动性和分散度较好，适合承担主要震荡交易功能。中证500波动明显高于A500，参数不可共用。</td><td><b>保留，且仅这两只长期常开网格。</b></td></tr>
+<tr><td>条件网格</td><td>159915 创业板、588000 科创50、512880 证券ETF</td><td>成交活跃、波动较高；科创50近120日区间幅度大，适合捕捉波动但最易单边破网。</td><td><b>只在震荡或确认上升趋势时开启，合计资金设上限。</b></td></tr>
+<tr><td>战术卫星</td><td>515880 通信、513120 港股创新药、513130 恒生科技、512400 有色、512170 医疗</td><td>行业或跨境因子强，通信、港股科技和创新药存在高β共振；有色单边周期特征较强。</td><td><b>一次最多启用1—2只，不能与科创50/创业板同时满额补仓。</b></td></tr>
+<tr><td>不宜常规网格</td><td>512800 银行、512890 红利低波、511260 十年国债</td><td>波动较低，频繁交易的价差未必覆盖佣金和滑点；其真正价值是低波底仓、再平衡和流动性管理。</td><td><b>退出网格池，改为底仓/再平衡工具。</b></td></tr>
+<tr><td>低优先级网格</td><td>562500 机器人、512660 军工、159928 消费</td><td>机器人和军工的流动性或题材波动不匹配常开网格；消费波动与成交额均偏低，网格触发效率一般。</td><td><b>不设自动网格；仅作为组合底仓或趋势确认后的人工分批。</b></td></tr>
+<tr><td>跨资产</td><td>518880 黄金ETF</td><td>流动性高、T+0，但与权益不是稳定负相关，单日振幅小不代表中期不趋势。</td><td><b>维持5%战略对冲；不作为高频网格主力。</b></td></tr>
+</tbody></table></div>
+<h3>标的准入筛选标准</h3>
+<div class="scroll"><table><thead><tr><th>维度</th><th>准入标准</th><th>避坑要点</th></tr></thead><tbody>
+<tr><td>产品属性</td><td>普通场内现货ETF；优先宽基或代表性行业指数。</td><td>不把杠杆、反向、过窄主题当作“波动更大、收益更高”的网格标的。</td></tr>
+<tr><td>流动性</td><td>观察近20个交易日<b>中位成交额</b>与盘口价差；单笔委托不超过该中位成交额的1%，大额拆单。</td><td>成交额不能只看某一日；成交清淡时滑点与价差会吃掉网格收益，极端行情还可能难以退出。</td></tr>
+<tr><td>价格偏离</td><td>买卖价差和折溢价应稳定可控；跨境ETF须额外看IOPV与海外市场时差。</td><td>溢价异常时不以市场价强行补仓；T+0不等于没有估值偏离风险。</td></tr>
+<tr><td>波动特征</td><td>有足够历史波动，且近60—120日不是单边失速下跌。宽基可较密，行业/成长需更宽。</td><td>波动低到不够覆盖成本不做网格；波动高到频繁跳档也不应靠加密网格解决。</td></tr>
+<tr><td>组合相关性</td><td>同一时间最多选择一个成长高β或同主题卫星标的。</td><td>创业板、科创、通信、恒生科技等在风险偏好收缩时可能同步下跌，不能当成独立分散。</td></tr>
+</tbody></table></div>
+<div class="note green"><b>优先级：</b>宽基ETF通常是首选；高波动成长ETF可作为条件网格；红利低波、银行、国债更适合底仓和再平衡，不适合高频网格。具体代码、费率、成交额和T+0资格须在执行前以基金公司、交易所和交易终端信息复核。</div></section>
+<section><h2>四、资金分配：底仓保留参与权，浮动仓才用于网格</h2>
+<p>以下为账户级的保守通用范例。若风险承受能力较低，先降低总权益和网格总资金，而不是用更宽止损来“兼容”大仓位。</p>
+<div class="scroll"><table><thead><tr><th>资金桶</th><th>占账户参考比例</th><th>功能</th><th>硬约束</th></tr></thead><tbody>
+<tr><td><b>长期底仓</b></td><td>15%—25%</td><td>长期认可的核心ETF；不因上方网格成交而卖出。</td><td>只因长期逻辑变化、账户再平衡或明确风险事件调整。</td></tr>
+<tr><td><b>初始浮动仓</b></td><td>6%—10%</td><td>分成4—6个等份额块，供上方卖出、回落买回。</td><td>每个份额块按交易单位取整；卖出不得动用底仓。</td></tr>
+<tr><td><b>下方预留现金</b></td><td>8%—15%</td><td>为下方网格留出固定额度；按固定份额块而非倍数摊平。</td><td>不允许“越跌买越多”；下沿外暂停，不追加新资金。</td></tr>
+<tr><td><b>账户机动现金</b></td><td>至少10%</td><td>不属于任何一个网格，用于极端行情和组合层面风险缓冲。</td><td>不可被普通挂单占满。</td></tr>
+</tbody></table></div>
+<div class="note blue"><b>单个ETF最大设计仓位</b> = 长期底仓 + 初始浮动仓 + 下方全部档位的最大成交金额；<br><b>账户全部自动网格最大已成交仓位</b> ≤ 账户净资产的 30%—40%；<br><b>单一高相关风险簇（如成长科技）全部网格资金</b> ≤ 账户净资产的 10%—15%。</div>
+<div class="note green"><b>单格交易金额：</b>用“固定份额块”而不是“固定金额翻倍”。例如某ETF浮动仓为账户8%，分成4个等份额块，则每格约为账户2%市值对应的份额；下跌时买同等份额，价格越低实际投入现金越少。这牺牲快速摊低成本，换取可控的尾部资金占用。</div></section>
+<section><h2>五、浮动范围的两个口径与汇总</h2>
+<p class="lead">同一策略需要两个口径：<b>百分比口径</b>用于判断“能承受多大波动”，<b>元口径</b>用于真正下单。百分比在不同价格基准下不可比（+10% 在 0.542 元与 134.805 元上金额完全不同），因此本章把两者并列，执行一律以元为准。</p>
+<div class="note amber"><b>三个概念不要混用：</b>
+<br>①<b>最大浮动范围</b>：策略可预先设计固定份额块、但不得追加资金或下移下沿继续摊平的风险边界；
+<br>②<b>实际网格区间</b>：通常比最大范围更窄，最后两档多需人工确认；
+<br>③<b>可执行下沿</b>：把步长向下整除后真实能挂到的最后一档，它与理论下边界之间的差额就是统一步长的代价。</div>
+<div class="scroll"><table><thead><tr><th>代码 / 名称</th><th>参考价</th><th>模式</th><th>下行%</th><th>上行%</th><th>步长(元)</th><th>步幅</th><th>上边界</th><th>理论下边界</th><th>可执行下沿</th><th>档数上/下</th><th>缺口</th></tr></thead><tbody>
+<tr><td><b>563360</b> A500ETF华泰柏瑞</td><td class="n">1.265</td><td>常开主网格</td><td class="n">−20%</td><td class="n">+18%</td><td class="n">0.033</td><td class="n">2.61%</td><td class="n">1.496</td><td class="n">1.012</td><td class="n"><b>1.034</b></td><td class="n">7 / 7</td><td class="n">1.74%</td></tr>
+<tr><td><b>510500</b> 中证500ETF南方</td><td class="n">7.818</td><td>常开主网格</td><td class="n">−25%</td><td class="n">+22%</td><td class="n">0.215</td><td class="n">2.75%</td><td class="n">9.538</td><td class="n">5.864</td><td class="n"><b>5.883</b></td><td class="n">8 / 9</td><td class="n">0.25%</td></tr>
+<tr><td><b>159915</b> 创业板ETF易方达</td><td class="n">3.399</td><td>条件网格</td><td class="n">−30%</td><td class="n">+25%</td><td class="n">0.142</td><td class="n">4.18%</td><td class="n">4.251</td><td class="n">2.379</td><td class="n"><b>2.405</b></td><td class="n">6 / 7</td><td class="n">0.76%</td></tr>
+<tr><td><b>588000</b> 科创50ETF华夏</td><td class="n">1.755</td><td>条件网格</td><td class="n">−35%</td><td class="n">+30%</td><td class="n">0.075</td><td class="n">4.27%</td><td class="n">2.280</td><td class="n">1.141</td><td class="n"><b>1.155</b></td><td class="n">7 / 8</td><td class="n">0.81%</td></tr>
+<tr><td><b>512880</b> 证券ETF国泰</td><td class="n">1.065</td><td>条件网格</td><td class="n">−30%</td><td class="n">+25%</td><td class="n">0.053</td><td class="n">4.98%</td><td class="n">1.330</td><td class="n">0.745</td><td class="n"><b>0.747</b></td><td class="n">5 / 6</td><td class="n">0.14%</td></tr>
+<tr><td><b>515880</b> 通信ETF国泰</td><td class="n">0.701</td><td>人工趋势网格</td><td class="n">−32%</td><td class="n">+25%</td><td class="n">0.044</td><td class="n">6.28%</td><td class="n">0.877</td><td class="n">0.477</td><td class="n"><b>0.481</b></td><td class="n">4 / 5</td><td class="n">0.62%</td></tr>
+<tr><td><b>513120</b> 港股创新药ETF广发</td><td class="n">1.361</td><td>条件网格(T+0)</td><td class="n">−30%</td><td class="n">+25%</td><td class="n">0.068</td><td class="n">5.00%</td><td class="n">1.701</td><td class="n">0.953</td><td class="n"><b>0.953</b></td><td class="n">5 / 6</td><td class="n">0.02%</td></tr>
+<tr><td><b>513130</b> 恒生科技ETF华泰柏瑞</td><td class="n">0.542</td><td>条件网格(T+0)</td><td class="n">−30%</td><td class="n">+25%</td><td class="n">0.027</td><td class="n">4.98%</td><td class="n">0.677</td><td class="n">0.379</td><td class="n"><b>0.380</b></td><td class="n">5 / 6</td><td class="n">0.11%</td></tr>
+<tr><td><b>512400</b> 有色金属ETF南方</td><td class="n">1.717</td><td>人工周期网格</td><td class="n">−30%</td><td class="n">+25%</td><td class="n">0.086</td><td class="n">5.01%</td><td class="n">2.147</td><td class="n">1.202</td><td class="n"><b>1.287</b></td><td class="n">5 / 5</td><td class="n">4.96%</td></tr>
+<tr><td><b>512170</b> 医疗ETF华宝</td><td class="n">0.349</td><td>条件网格</td><td class="n">−25%</td><td class="n">+20%</td><td class="n">0.017</td><td class="n">4.87%</td><td class="n">0.417</td><td class="n">0.262</td><td class="n"><b>0.264</b></td><td class="n">4 / 5</td><td class="n">0.64%</td></tr>
+<tr><td><b>562500</b> 机器人ETF华夏</td><td class="n">0.929</td><td>人工网格</td><td class="n">−25%</td><td class="n">+20%</td><td class="n">0.046</td><td class="n">4.95%</td><td class="n">1.113</td><td class="n">0.697</td><td class="n"><b>0.699</b></td><td class="n">4 / 5</td><td class="n">0.24%</td></tr>
+<tr><td><b>512660</b> 军工ETF国泰</td><td class="n">1.150</td><td>人工网格</td><td class="n">−25%</td><td class="n">+20%</td><td class="n">0.058</td><td class="n">5.04%</td><td class="n">1.382</td><td class="n">0.862</td><td class="n"><b>0.918</b></td><td class="n">4 / 4</td><td class="n">4.83%</td></tr>
+<tr><td><b>159928</b> 消费ETF汇添富</td><td class="n">0.656</td><td>低频人工网格</td><td class="n">−20%</td><td class="n">+18%</td><td class="n">0.030</td><td class="n">4.57%</td><td class="n">0.776</td><td class="n">0.525</td><td class="n"><b>0.536</b></td><td class="n">4 / 4</td><td class="n">1.71%</td></tr>
+<tr><td><b>518880</b> 黄金ETF华安</td><td class="n">8.897</td><td>低频条件网格(T+0)</td><td class="n">−25%</td><td class="n">+20%</td><td class="n">0.356</td><td class="n">4.00%</td><td class="n">10.677</td><td class="n">6.673</td><td class="n"><b>6.761</b></td><td class="n">5 / 6</td><td class="n">0.99%</td></tr>
+<tr><td><b>512800</b> 银行ETF华宝</td><td class="n">0.833</td><td>再平衡优先</td><td class="n">−15%</td><td class="n">+12%</td><td class="n">0.025</td><td class="n">3.00%</td><td class="n">0.933</td><td class="n">0.708</td><td class="n"><b>0.733</b></td><td class="n">4 / 4</td><td class="n">3.00%</td></tr>
+<tr><td><b>512890</b> 红利低波ETF华泰柏瑞</td><td class="n">1.182</td><td>再平衡优先</td><td class="n">−15%</td><td class="n">+12%</td><td class="n">0.035</td><td class="n">2.96%</td><td class="n">1.322</td><td class="n">1.005</td><td class="n"><b>1.007</b></td><td class="n">4 / 5</td><td class="n">0.19%</td></tr>
+<tr><td><b>511260</b> 十年国债ETF国泰</td><td class="n">134.805</td><td>仅再平衡</td><td class="n">−2%</td><td class="n">+2%</td><td class="n">1.348</td><td class="n">1.00%</td><td class="n">137.501</td><td class="n">132.109</td><td class="n"><b>132.109</b></td><td class="n">2 / 2</td><td class="n">0.00%</td></tr>
+</tbody></table></div>
+<p class="src">参考价来源：金融数据检索（westock-data），时点 2026-09-23 收盘；U%/D% 来自基于同日行情、估值与波动推导的最大浮动范围；元口径为本文件第五、六章公式计算值。</p>
+<h3>步长占比与下方未覆盖缺口</h3><div id="chart1" style="width:100%;height:420px;"></div></section>
+<section><h2>六、步长算法：为什么采用方案B</h2>
+<p class="lead">当上行容忍度与下行容忍度不一致时（-32% / +25% 这类），步长有三种取法。本文件统一采用<b>方案B</b>：步长唯一取自向上宽度，再等值套用到下方。</p>
+<div class="scroll"><table><thead><tr><th>方案</th><th>做法</th><th>优点</th><th>代价</th></tr></thead><tbody>
+<tr><td>方案A：上下各自均分</td><td>上侧步长 = W_up÷N_up，下侧步长 = W_dn÷N_dn，两侧步长不同</td><td>两侧都能精确覆盖各自边界</td><td>价格回访时路径不对称；多数券商单一网格只接受一个步长</td></tr>
+<tr><td><b>方案B：统一步长（本文件采用）</b></td><td><b>step = W_up÷N_up，向下同样用它整除</b></td><td>上下同刻度、可用一个参数下单，K线回访时买卖路径对称</td><td>下方最后一档到理论边界之间留有缺口，缺口按红灯处理</td></tr>
+<tr><td>方案C：人工两段式</td><td>分别记录上侧与下侧两套价位，手工确认</td><td>最灵活</td><td>依赖人工盯盘，不可自动化，易丢档</td></tr>
+</tbody></table></div>
+<div class="note blue"><b>统一公式（17只通用）：</b><br>
+<code>W_up = P₀ × U%</code>　→　<code>N_up = 使 W_up÷n 落入类别建议步幅区间的整数</code>　→　<code>step = round(W_up ÷ N_up, 0.001元)</code><br>
+<code>上边界 P_up = P₀ + N_up × step</code>；<code>理论下边界 L_theory = P₀ − P₀ × D%</code><br>
+<code>N_down = ⌊(P₀ − L_theory) ÷ step⌋</code>；<code>可执行下沿 L_exec = P₀ − N_down × step</code>；<code>gap = L_exec − L_theory ≥ 0</code></div>
+<div class="scroll"><table><thead><tr><th>类别</th><th>建议单格步幅</th><th>适用标的</th></tr></thead><tbody>
+<tr><td>核心宽基</td><td>2.5%—3.5%</td><td>563360、510500</td></tr>
+<tr><td>成长 / 高波动宽基</td><td>4.0%—5.5%</td><td>159915、588000、512880</td></tr>
+<tr><td>行业 / 跨境 / 周期卫星</td><td>5.0%—7.0%</td><td>515880、513120、513130、512400、512170、562500、512660</td></tr>
+<tr><td>低频人工网格</td><td>3.5%—5.0%</td><td>159928、518880</td></tr>
+<tr><td>再平衡型</td><td>3.0%—4.5%</td><td>512800、512890</td></tr>
+<tr><td>债券久期型</td><td>0.5%—1.0%</td><td>511260</td></tr>
+</tbody></table></div>
+<div class="note amber"><b>选档规则的取舍顺序：</b>先在类别建议步幅区间内寻找可行步长，再按“①最小化下方未覆盖缺口 ②其次取较大步长（档数更少、摩擦更小）”定档。取整为 0.001 元，取整误差已逐只披露。</div>
+<div class="note red"><b>硬性执行规则：</b>价格跌破<b>可执行下沿</b>即按红灯处理——撤销未成交买单、冻结网格，不得扩网、下移下沿或用新资金继续摊平。<b>“还没到理论下边界”不是继续持有的理由。</b></div></section>
+<section><h2>七、逐只明细：推导、档位、前提与风险</h2>
+<div class="note blue">每只独立成节，便于逐项核对。价格单位均为元；百分比仅用于说明幅度来源。</div>
+<div class="etf">
+<h3>563360｜A500ETF华泰柏瑞<span class="small">　核心宽基｜常开主网格</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">1.265 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+18% / −20%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.2277 / 0.2530 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.033 元</b></td><td>方案B：<code>0.2277 ÷ 7 = 0.03253 → 取整 0.033</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">2.61%</td><td>落在 核心宽基 类别建议区间 2.5%—3.5%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>1.496 元</b></td><td><code>1.265 + 7 × 0.033</code></td></tr>
+<tr><td>理论下边界</td><td class="n">1.012 元</td><td><code>1.265 − 0.2530</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>1.034 元</b></td><td><code>N_down=⌊0.2530÷0.033⌋=7</code>；<code>1.265 − 7 × 0.033</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0220 元（1.74%）</td><td>跌破 1.034 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">2.61% ÷ 0.14% = <b>18.6 倍</b></td><td>单日成交额 ≥20亿元，流动性充足，不加额外滑点</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（7 档，由近及远）：</b><br>
+<span>第1档 1.298</span>
+<span>第2档 1.331</span>
+<span>第3档 1.364</span>
+<span>第4档 1.397</span>
+<span>第5档 1.430</span>
+<span>第6档 1.463</span>
+<span>第7档 1.496</span>
+</div><div class="lad dn"><b>下方买入档（7 档，由近及远）：</b><br>
+<span>第1档 1.232</span>
+<span>第2档 1.199</span>
+<span>第3档 1.166</span>
+<span>第4档 1.133</span>
+<span>第5档 1.100</span>
+<span>第6档 1.067</span>
+<span>第7档 1.034</span>
+</div>
+<h4>判断依据</h4><p>跟踪中证A500，PE(TTM)16.04倍、PB1.65倍（2026-09-22）；收盘1.265元，52周高/低1.433/1.181元，近60日-10.54%，价格贴20日布林中轨但略低于60日/250日均线。</p>
+<h4>启动前提</h4><p>价格未连续两日有效跌破可执行下沿、且指数未放量失速时执行；核心网格资金建议10%—12%；常开，无需额外趋势过滤。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>A500编制历史短，估值分位参考期有限；指数层面回撤会与大盘共振；下方缺口1.74%意味着1.034元即红灯，不等1.012元。</li>
+<li><b>覆盖完整性：</b>下行止于 1.034 元，与理论边界 1.012 元相差 0.0220 元（1.74%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 2.61% ÷ 往返成本 0.14% = 18.6 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>510500｜中证500ETF南方<span class="small">　核心宽基｜常开主网格</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">7.818 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+22% / −25%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">1.7200 / 1.9545 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.215 元</b></td><td>方案B：<code>1.7200 ÷ 8 = 0.21500 → 取整 0.215</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">2.75%</td><td>落在 核心宽基 类别建议区间 2.5%—3.5%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>9.538 元</b></td><td><code>7.818 + 8 × 0.215</code></td></tr>
+<tr><td>理论下边界</td><td class="n">5.864 元</td><td><code>7.818 − 1.9545</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>5.883 元</b></td><td><code>N_down=⌊1.9545÷0.215⌋=9</code>；<code>7.818 − 9 × 0.215</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0195 元（0.25%）</td><td>跌破 5.883 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">2.75% ÷ 0.14% = <b>19.6 倍</b></td><td>单日成交额 ≥20亿元，流动性充足，不加额外滑点</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（8 档，由近及远）：</b><br>
+<span>第1档 8.033</span>
+<span>第2档 8.248</span>
+<span>第3档 8.463</span>
+<span>第4档 8.678</span>
+<span>第5档 8.893</span>
+<span>第6档 9.108</span>
+<span>第7档 9.323</span>
+<span>第8档 9.538</span>
+</div><div class="lad dn"><b>下方买入档（9 档，由近及远）：</b><br>
+<span>第1档 7.603</span>
+<span>第2档 7.388</span>
+<span>第3档 7.173</span>
+<span>第4档 6.958</span>
+<span>第5档 6.743</span>
+<span>第6档 6.528</span>
+<span>第7档 6.313</span>
+<span>第8档 6.098</span>
+<span>第9档 5.883</span>
+</div>
+<h4>判断依据</h4><p>跟踪中证500；收盘7.818元，52周高/低9.156/6.692元，近60日-13.43%；波动明显高于A500，估值分位在不同回溯区间下差异较大，不宜以“低估”为唯一前提。</p>
+<h4>启动前提</h4><p>核心网格资金6%—8%，固定份额块单独设置；不与成长主题ETF同步加大下方买入；跌破5.883元连续两日转红灯。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>中小盘风险偏好收缩时下行速度可显著快于A500；若沿用A500的档距与仓位会成交过密、现金消耗过快。</li>
+<li><b>覆盖完整性：</b>下行止于 5.883 元，与理论边界 5.864 元相差 0.0195 元（0.25%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 2.75% ÷ 往返成本 0.14% = 19.6 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>159915｜创业板ETF易方达<span class="small">　成长/高波动宽基｜条件网格</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">3.399 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+25% / −30%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.8497 / 1.0197 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.142 元</b></td><td>方案B：<code>0.8497 ÷ 6 = 0.14162 → 取整 0.142</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">4.18%</td><td>落在 成长/高波动宽基 类别建议区间 4.0%—5.5%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>4.251 元</b></td><td><code>3.399 + 6 × 0.142</code></td></tr>
+<tr><td>理论下边界</td><td class="n">2.379 元</td><td><code>3.399 − 1.0197</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>2.405 元</b></td><td><code>N_down=⌊1.0197÷0.142⌋=7</code>；<code>3.399 − 7 × 0.142</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0257 元（0.76%）</td><td>跌破 2.405 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">4.18% ÷ 0.14% = <b>29.8 倍</b></td><td>单日成交额 ≥20亿元，流动性充足，不加额外滑点</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（6 档，由近及远）：</b><br>
+<span>第1档 3.541</span>
+<span>第2档 3.683</span>
+<span>第3档 3.825</span>
+<span>第4档 3.967</span>
+<span>第5档 4.109</span>
+<span>第6档 4.251</span>
+</div><div class="lad dn"><b>下方买入档（7 档，由近及远）：</b><br>
+<span>第1档 3.257</span>
+<span>第2档 3.115</span>
+<span>第3档 2.973</span>
+<span>第4档 2.831</span>
+<span>第5档 2.689</span>
+<span>第6档 2.547</span>
+<span>第7档 2.405</span>
+</div>
+<h4>判断依据</h4><p>跟踪创业板指；收盘3.399元，52周高/低4.395/2.873元，近60日-20.47%；PE、PB历史位置大致中低位，但成长风格波动更高，价格仍在60日线下方。</p>
+<h4>启动前提</h4><p>至少横盘10个交易日或有效重回60日线后启用；4.0%—5.5%步幅，最后两档人工确认；单只≤4%—5%。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 20%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>20%涨跌幅限制下单日可跨越多档；成长风格退潮时与科创50、通信、机器人、恒生科技同步下跌，不可视为分散。</li>
+<li><b>覆盖完整性：</b>下行止于 2.405 元，与理论边界 2.379 元相差 0.0257 元（0.76%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 4.18% ÷ 往返成本 0.14% = 29.8 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 20% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>588000｜科创50ETF华夏<span class="small">　成长/高波动宽基｜条件网格</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">1.755 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+30% / −35%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.5265 / 0.6142 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.075 元</b></td><td>方案B：<code>0.5265 ÷ 7 = 0.07521 → 取整 0.075</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">4.27%</td><td>落在 成长/高波动宽基 类别建议区间 4.0%—5.5%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>2.280 元</b></td><td><code>1.755 + 7 × 0.075</code></td></tr>
+<tr><td>理论下边界</td><td class="n">1.141 元</td><td><code>1.755 − 0.6142</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>1.155 元</b></td><td><code>N_down=⌊0.6142÷0.075⌋=8</code>；<code>1.755 − 8 × 0.075</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0142 元（0.81%）</td><td>跌破 1.155 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">4.27% ÷ 0.14% = <b>30.5 倍</b></td><td>单日成交额 ≥20亿元，流动性充足，不加额外滑点</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（7 档，由近及远）：</b><br>
+<span>第1档 1.830</span>
+<span>第2档 1.905</span>
+<span>第3档 1.980</span>
+<span>第4档 2.055</span>
+<span>第5档 2.130</span>
+<span>第6档 2.205</span>
+<span>第7档 2.280</span>
+</div><div class="lad dn"><b>下方买入档（8 档，由近及远）：</b><br>
+<span>第1档 1.680</span>
+<span>第2档 1.605</span>
+<span>第3档 1.530</span>
+<span>第4档 1.455</span>
+<span>第5档 1.380</span>
+<span>第6档 1.305</span>
+<span>第7档 1.230</span>
+<span>第8档 1.155</span>
+</div>
+<h4>判断依据</h4><p>跟踪科创50，PE(TTM)约136.92倍、PB约7.91倍（2026-09-22），剔除亏损股后PE仍约84.81倍；收盘1.755元，52周高/低2.390/1.316元，近60日-23.36%。</p>
+<h4>启动前提</h4><p>只适合小预算、最多5—6个有效档，最后两档不自动挂单；跌破1.155元连续两日即冻结。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 20%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>全组估值最高、波动最大；宽范围来自历史振幅，不代表可用摊平消化35%下跌；20%涨跌幅限制下跳空风险更高。</li>
+<li><b>覆盖完整性：</b>下行止于 1.155 元，与理论边界 1.141 元相差 0.0142 元（0.81%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 4.27% ÷ 往返成本 0.14% = 30.5 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 20% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>512880｜证券ETF国泰<span class="small">　成长/高波动宽基（高β）｜条件网格</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">1.065 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+25% / −30%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.2662 / 0.3195 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.053 元</b></td><td>方案B：<code>0.2662 ÷ 5 = 0.05324 → 取整 0.053</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">4.98%</td><td>落在 成长/高波动宽基（高β） 类别建议区间 4.0%—5.5%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>1.330 元</b></td><td><code>1.065 + 5 × 0.053</code></td></tr>
+<tr><td>理论下边界</td><td class="n">0.745 元</td><td><code>1.065 − 0.3195</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>0.747 元</b></td><td><code>N_down=⌊0.3195÷0.053⌋=6</code>；<code>1.065 − 6 × 0.053</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0015 元（0.14%）</td><td>跌破 0.747 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">4.98% ÷ 0.19% = <b>26.2 倍</b></td><td>单日成交额 5—20亿元，额外滑点 +0.05%</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（5 档，由近及远）：</b><br>
+<span>第1档 1.118</span>
+<span>第2档 1.171</span>
+<span>第3档 1.224</span>
+<span>第4档 1.277</span>
+<span>第5档 1.330</span>
+</div><div class="lad dn"><b>下方买入档（6 档，由近及远）：</b><br>
+<span>第1档 1.012</span>
+<span>第2档 0.959</span>
+<span>第3档 0.906</span>
+<span>第4档 0.853</span>
+<span>第5档 0.800</span>
+<span>第6档 0.747</span>
+</div>
+<h4>判断依据</h4><p>跟踪证券公司指数；收盘1.065元，52周高/低1.309/0.993元，年内-12.06%；PE历史分位处极低位置，但价格仍低于60日/250日线。</p>
+<h4>启动前提</h4><p>必须看到市场成交额与券商相对强度同步改善、至少重回20日线后启用；下行可执行下沿0.747元外不再新增买入。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>低估是安全垫不是触发器；券商是风险偏好放大器，指数下跌时常快于宽基，不可把低PE理解为低波动。</li>
+<li><b>覆盖完整性：</b>下行止于 0.747 元，与理论边界 0.745 元相差 0.0015 元（0.14%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 4.98% ÷ 往返成本 0.19% = 26.2 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>515880｜通信ETF国泰<span class="small">　行业卫星（强动量）｜人工趋势网格</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">0.701 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+25% / −32%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.1752 / 0.2243 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.044 元</b></td><td>方案B：<code>0.1752 ÷ 4 = 0.04380 → 取整 0.044</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">6.28%</td><td>落在 行业卫星（强动量） 类别建议区间 5.0%—7.0%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>0.877 元</b></td><td><code>0.701 + 4 × 0.044</code></td></tr>
+<tr><td>理论下边界</td><td class="n">0.477 元</td><td><code>0.701 − 0.2243</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>0.481 元</b></td><td><code>N_down=⌊0.2243÷0.044⌋=5</code>；<code>0.701 − 5 × 0.044</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0043 元（0.62%）</td><td>跌破 0.481 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">6.28% ÷ 0.14% = <b>44.8 倍</b></td><td>单日成交额 ≥20亿元，流动性充足，不加额外滑点</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（4 档，由近及远）：</b><br>
+<span>第1档 0.745</span>
+<span>第2档 0.789</span>
+<span>第3档 0.833</span>
+<span>第4档 0.877</span>
+</div><div class="lad dn"><b>下方买入档（5 档，由近及远）：</b><br>
+<span>第1档 0.657</span>
+<span>第2档 0.613</span>
+<span>第3档 0.569</span>
+<span>第4档 0.525</span>
+<span>第5档 0.481</span>
+</div>
+<h4>判断依据</h4><p>跟踪通信设备；收盘0.701元，52周高/低0.944/0.395元，年内+36.65%，仍处多头均线结构；强动量使上行易过早卖空、下行易因题材退潮快速破位。</p>
+<h4>启动前提</h4><p>仅在周线不破趋势、价格回到20日线附近横盘时用少量浮动仓；突破0.877元后停止继续卖出，不可反手做空。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>与成长科技风险簇高度相关；单日大幅波动可跨越多格，必须执行“跳空日最多成交一格”。</li>
+<li><b>覆盖完整性：</b>下行止于 0.481 元，与理论边界 0.477 元相差 0.0043 元（0.62%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 6.28% ÷ 往返成本 0.14% = 44.8 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>513120｜港股创新药ETF广发<span class="small">　跨境卫星（T+0）｜条件网格(T+0)</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">1.361 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+25% / −30%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.3402 / 0.4083 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.068 元</b></td><td>方案B：<code>0.3402 ÷ 5 = 0.06804 → 取整 0.068</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">5.00%</td><td>落在 跨境卫星（T+0） 类别建议区间 5.0%—7.0%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>1.701 元</b></td><td><code>1.361 + 5 × 0.068</code></td></tr>
+<tr><td>理论下边界</td><td class="n">0.953 元</td><td><code>1.361 − 0.4083</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>0.953 元</b></td><td><code>N_down=⌊0.4083÷0.068⌋=6</code>；<code>1.361 − 6 × 0.068</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0003 元（0.02%）</td><td>跌破 0.953 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">5.00% ÷ 0.14% = <b>35.7 倍</b></td><td>单日成交额 ≥20亿元，流动性充足，不加额外滑点</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（5 档，由近及远）：</b><br>
+<span>第1档 1.429</span>
+<span>第2档 1.497</span>
+<span>第3档 1.565</span>
+<span>第4档 1.633</span>
+<span>第5档 1.701</span>
+</div><div class="lad dn"><b>下方买入档（6 档，由近及远）：</b><br>
+<span>第1档 1.293</span>
+<span>第2档 1.225</span>
+<span>第3档 1.157</span>
+<span>第4档 1.089</span>
+<span>第5档 1.021</span>
+<span>第6档 0.953</span>
+</div>
+<h4>判断依据</h4><p>跟踪港股创新药；收盘1.361元，52周高/低1.569/0.958元，近60日+23.28%；估值分位相对偏低，但价格已明显高于20日/60日线，RSI短期偏热。</p>
+<h4>启动前提</h4><p>不在明显溢价、海外休市或IOPV失真时执行；回踩20日线后再做4.5%—5.5%步幅网格，首期只启用中部档位。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>受政策、融资环境与美元流动性共同影响；与恒生科技、成长科技的跨境风险会阶段性共振。</li>
+<li><b>覆盖完整性：</b>下行止于 0.953 元，与理论边界 0.953 元相差 0.0003 元（0.02%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 5.00% ÷ 往返成本 0.14% = 35.7 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>513130｜恒生科技ETF华泰柏瑞<span class="small">　跨境卫星（T+0）｜条件网格(T+0)</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">0.542 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+25% / −30%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.1355 / 0.1626 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.027 元</b></td><td>方案B：<code>0.1355 ÷ 5 = 0.02710 → 取整 0.027</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">4.98%</td><td>落在 跨境卫星（T+0） 类别建议区间 5.0%—7.0%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>0.677 元</b></td><td><code>0.542 + 5 × 0.027</code></td></tr>
+<tr><td>理论下边界</td><td class="n">0.379 元</td><td><code>0.542 − 0.1626</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>0.380 元</b></td><td><code>N_down=⌊0.1626÷0.027⌋=6</code>；<code>0.542 − 6 × 0.027</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0006 元（0.11%）</td><td>跌破 0.380 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">4.98% ÷ 0.19% = <b>26.2 倍</b></td><td>单日成交额 5—20亿元，额外滑点 +0.05%</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（5 档，由近及远）：</b><br>
+<span>第1档 0.569</span>
+<span>第2档 0.596</span>
+<span>第3档 0.623</span>
+<span>第4档 0.650</span>
+<span>第5档 0.677</span>
+</div><div class="lad dn"><b>下方买入档（6 档，由近及远）：</b><br>
+<span>第1档 0.515</span>
+<span>第2档 0.488</span>
+<span>第3档 0.461</span>
+<span>第4档 0.434</span>
+<span>第5档 0.407</span>
+<span>第6档 0.380</span>
+</div>
+<h4>判断依据</h4><p>跟踪恒生科技；收盘0.542元，52周高/低0.878/0.528元，年内-24.51%；估值处中低位置但价格低于全部主要均线，弱势仍在。</p>
+<h4>启动前提</h4><p>先见至少两周低点不再下移或收复20日线再启用；下沿0.380元外暂停；不把T+0误用为高频追涨杀跌。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>港股风险偏好、人民币汇率、海外科技估值与平台监管预期可能同向冲击；低位置只提高赔率，不能替代趋势过滤。</li>
+<li><b>覆盖完整性：</b>下行止于 0.380 元，与理论边界 0.379 元相差 0.0006 元（0.11%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 4.98% ÷ 往返成本 0.19% = 26.2 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>512400｜有色金属ETF南方<span class="small">　周期卫星｜人工周期网格</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">1.717 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+25% / −30%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.4293 / 0.5151 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.086 元</b></td><td>方案B：<code>0.4293 ÷ 5 = 0.08586 → 取整 0.086</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">5.01%</td><td>落在 周期卫星 类别建议区间 5.0%—7.0%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>2.147 元</b></td><td><code>1.717 + 5 × 0.086</code></td></tr>
+<tr><td>理论下边界</td><td class="n">1.202 元</td><td><code>1.717 − 0.5151</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>1.287 元</b></td><td><code>N_down=⌊0.5151÷0.086⌋=5</code>；<code>1.717 − 5 × 0.086</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0851 元（4.96%）</td><td>跌破 1.287 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">5.01% ÷ 0.26% = <b>19.3 倍</b></td><td>单日成交额 2—5亿元，额外滑点 +0.12%</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（5 档，由近及远）：</b><br>
+<span>第1档 1.803</span>
+<span>第2档 1.889</span>
+<span>第3档 1.975</span>
+<span>第4档 2.061</span>
+<span>第5档 2.147</span>
+</div><div class="lad dn"><b>下方买入档（5 档，由近及远）：</b><br>
+<span>第1档 1.631</span>
+<span>第2档 1.545</span>
+<span>第3档 1.459</span>
+<span>第4档 1.373</span>
+<span>第5档 1.287</span>
+</div>
+<h4>判断依据</h4><p>跟踪申万有色；收盘1.717元，52周高/低2.594/1.393元，近20日-7.89%；PE约16.53倍、PB约3.29倍（2026-09-22），但商品周期驱动显著，价格低于20/60/250日线。</p>
+<h4>启动前提</h4><p>需同时确认商品价格、美元或实际利率与国内需求预期不再恶化；只做卫星仓，单只≤3%。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>本方案下缺口最大（4.96%）：1.287元已是最后可执行买入档，再往下属缺口区，不得继续；周期单边可长期延续。</li>
+<li><b>覆盖完整性：</b>下行止于 1.287 元，与理论边界 1.202 元相差 0.0851 元（4.96%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 5.01% ÷ 往返成本 0.26% = 19.3 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>512170｜医疗ETF华宝<span class="small">　行业卫星｜条件网格</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">0.349 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+20% / −25%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.0698 / 0.0872 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.017 元</b></td><td>方案B：<code>0.0698 ÷ 4 = 0.01745 → 取整 0.017</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">4.87%</td><td>落在 行业卫星 类别建议区间 5.0%—7.0%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>0.417 元</b></td><td><code>0.349 + 4 × 0.017</code></td></tr>
+<tr><td>理论下边界</td><td class="n">0.262 元</td><td><code>0.349 − 0.0872</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>0.264 元</b></td><td><code>N_down=⌊0.0872÷0.017⌋=5</code>；<code>0.349 − 5 × 0.017</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0022 元（0.64%）</td><td>跌破 0.264 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">4.87% ÷ 0.26% = <b>18.7 倍</b></td><td>单日成交额 2—5亿元，额外滑点 +0.12%</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（4 档，由近及远）：</b><br>
+<span>第1档 0.366</span>
+<span>第2档 0.383</span>
+<span>第3档 0.400</span>
+<span>第4档 0.417</span>
+</div><div class="lad dn"><b>下方买入档（5 档，由近及远）：</b><br>
+<span>第1档 0.332</span>
+<span>第2档 0.315</span>
+<span>第3档 0.298</span>
+<span>第4档 0.281</span>
+<span>第5档 0.264</span>
+</div>
+<h4>判断依据</h4><p>跟踪中证医疗，PE(TTM)30.97倍、PB3.61倍（2026-09-22）；收盘0.349元，52周高/低0.399/0.287元，近60日+11.15%，价格站上20日/60日线但短线KDJ偏热。</p>
+<h4>启动前提</h4><p>回落到20日线附近企稳或横盘消化短线热度后启用；单一卫星仓不超过账户3%—4%。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>单价仅0.349元，0.001元最小变动单位相当于0.29%的价格刻度，取整对步长影响相对更大；政策与集采预期会造成跳空。</li>
+<li><b>覆盖完整性：</b>下行止于 0.264 元，与理论边界 0.262 元相差 0.0022 元（0.64%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 4.87% ÷ 往返成本 0.26% = 18.7 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>562500｜机器人ETF华夏<span class="small">　题材卫星｜人工网格</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">0.929 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+20% / −25%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.1858 / 0.2323 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.046 元</b></td><td>方案B：<code>0.1858 ÷ 4 = 0.04645 → 取整 0.046</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">4.95%</td><td>落在 题材卫星 类别建议区间 5.0%—7.0%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>1.113 元</b></td><td><code>0.929 + 4 × 0.046</code></td></tr>
+<tr><td>理论下边界</td><td class="n">0.697 元</td><td><code>0.929 − 0.2323</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>0.699 元</b></td><td><code>N_down=⌊0.2323÷0.046⌋=5</code>；<code>0.929 − 5 × 0.046</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0023 元（0.24%）</td><td>跌破 0.699 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">4.95% ÷ 0.26% = <b>19.0 倍</b></td><td>单日成交额 2—5亿元，额外滑点 +0.12%</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（4 档，由近及远）：</b><br>
+<span>第1档 0.975</span>
+<span>第2档 1.021</span>
+<span>第3档 1.067</span>
+<span>第4档 1.113</span>
+</div><div class="lad dn"><b>下方买入档（5 档，由近及远）：</b><br>
+<span>第1档 0.883</span>
+<span>第2档 0.837</span>
+<span>第3档 0.791</span>
+<span>第4档 0.745</span>
+<span>第5档 0.699</span>
+</div>
+<h4>判断依据</h4><p>跟踪机器人产业指数；收盘0.929元，52周高/低1.233/0.895元，近60日-19.36%，价格低于主要均线，单日成交额约2.50亿元。</p>
+<h4>启动前提</h4><p>先等相对强度停止创新低、至少站稳20日线；小仓位人工分批，深层档一律人工批准。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>题材指数中枢会随产业预期迁移；成交偏低时滑点惩罚按较高档计入，不可与通信、科创、创业板满额并行。</li>
+<li><b>覆盖完整性：</b>下行止于 0.699 元，与理论边界 0.697 元相差 0.0023 元（0.24%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 4.95% ÷ 往返成本 0.26% = 19.0 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>512660｜军工ETF国泰<span class="small">　题材卫星｜人工网格</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">1.150 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+20% / −25%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.2300 / 0.2875 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.058 元</b></td><td>方案B：<code>0.2300 ÷ 4 = 0.05750 → 取整 0.058</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">5.04%</td><td>落在 题材卫星 类别建议区间 5.0%—7.0%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>1.382 元</b></td><td><code>1.150 + 4 × 0.058</code></td></tr>
+<tr><td>理论下边界</td><td class="n">0.862 元</td><td><code>1.150 − 0.2875</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>0.918 元</b></td><td><code>N_down=⌊0.2875÷0.058⌋=4</code>；<code>1.150 − 4 × 0.058</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0555 元（4.83%）</td><td>跌破 0.918 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">5.04% ÷ 0.34% = <b>14.8 倍</b></td><td>单日成交额 <2亿元，成交偏清淡，额外滑点 +0.20%</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（4 档，由近及远）：</b><br>
+<span>第1档 1.208</span>
+<span>第2档 1.266</span>
+<span>第3档 1.324</span>
+<span>第4档 1.382</span>
+</div><div class="lad dn"><b>下方买入档（4 档，由近及远）：</b><br>
+<span>第1档 1.092</span>
+<span>第2档 1.034</span>
+<span>第3档 0.976</span>
+<span>第4档 0.918</span>
+</div>
+<h4>判断依据</h4><p>跟踪中证军工；收盘1.150元，52周高/低1.684/1.035元，年内-16.24%；估值大体位于历史中部，价格仍低于250日线，单日成交额约1.64亿元。</p>
+<h4>启动前提</h4><p>仅在政策或订单催化得到价格确认、站稳20日与60日线后启用；单一卫星总资金小于账户3%。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>本方案下次大缺口（4.83%）：0.918元即最后可执行档；事件驱动使均值回归假设偏弱，成交偏低不宜频繁小额交易。</li>
+<li><b>覆盖完整性：</b>下行止于 0.918 元，与理论边界 0.862 元相差 0.0555 元（4.83%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 5.04% ÷ 往返成本 0.34% = 14.8 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>159928｜消费ETF汇添富<span class="small">　低频人工网格｜低频人工网格</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">0.656 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+18% / −20%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.1181 / 0.1312 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.030 元</b></td><td>方案B：<code>0.1181 ÷ 4 = 0.02952 → 取整 0.030</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">4.57%</td><td>落在 低频人工网格 类别建议区间 3.5%—5.0%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>0.776 元</b></td><td><code>0.656 + 4 × 0.030</code></td></tr>
+<tr><td>理论下边界</td><td class="n">0.525 元</td><td><code>0.656 − 0.1312</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>0.536 元</b></td><td><code>N_down=⌊0.1312÷0.030⌋=4</code>；<code>0.656 − 4 × 0.030</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0112 元（1.71%）</td><td>跌破 0.536 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">4.57% ÷ 0.34% = <b>13.5 倍</b></td><td>单日成交额 <2亿元，成交偏清淡，额外滑点 +0.20%</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（4 档，由近及远）：</b><br>
+<span>第1档 0.686</span>
+<span>第2档 0.716</span>
+<span>第3档 0.746</span>
+<span>第4档 0.776</span>
+</div><div class="lad dn"><b>下方买入档（4 档，由近及远）：</b><br>
+<span>第1档 0.626</span>
+<span>第2档 0.596</span>
+<span>第3档 0.566</span>
+<span>第4档 0.536</span>
+</div>
+<h4>判断依据</h4><p>跟踪中证800消费；收盘0.656元，52周高/低0.858/0.593元，年内-17.28%，处低位横盘，单日成交额约1.44亿元。</p>
+<h4>启动前提</h4><p>先实测佣金、最低收费与盘口价差，确认单格毛利可覆盖成本再启用；价格未脱离底部箱体时才使用。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>全组成交最清淡之一，滑点与最低佣金占比最高（倍数13.5倍，为卫星组最低）；低位可能演变为长期横盘或中枢下移。</li>
+<li><b>覆盖完整性：</b>下行止于 0.536 元，与理论边界 0.525 元相差 0.0112 元（1.71%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 4.57% ÷ 往返成本 0.34% = 13.5 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>518880｜黄金ETF华安<span class="small">　低频条件网格（T+0）｜低频条件网格(T+0)</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">8.897 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+20% / −25%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">1.7794 / 2.2243 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.356 元</b></td><td>方案B：<code>1.7794 ÷ 5 = 0.35588 → 取整 0.356</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">4.00%</td><td>落在 低频条件网格（T+0） 类别建议区间 3.5%—5.0%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>10.677 元</b></td><td><code>8.897 + 5 × 0.356</code></td></tr>
+<tr><td>理论下边界</td><td class="n">6.673 元</td><td><code>8.897 − 2.2243</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>6.761 元</b></td><td><code>N_down=⌊2.2243÷0.356⌋=6</code>；<code>8.897 − 6 × 0.356</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0882 元（0.99%）</td><td>跌破 6.761 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">4.00% ÷ 0.14% = <b>28.6 倍</b></td><td>单日成交额 ≥20亿元，流动性充足，不加额外滑点</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（5 档，由近及远）：</b><br>
+<span>第1档 9.253</span>
+<span>第2档 9.609</span>
+<span>第3档 9.965</span>
+<span>第4档 10.321</span>
+<span>第5档 10.677</span>
+</div><div class="lad dn"><b>下方买入档（6 档，由近及远）：</b><br>
+<span>第1档 8.541</span>
+<span>第2档 8.185</span>
+<span>第3档 7.829</span>
+<span>第4档 7.473</span>
+<span>第5档 7.117</span>
+<span>第6档 6.761</span>
+</div>
+<h4>判断依据</h4><p>跟踪黄金9999；收盘8.897元，52周高/低11.977/8.116元，近20日-6.51%，产品规模与流动性较好，可T+0。</p>
+<h4>启动前提</h4><p>使用4%—5%步幅的低频交易；美元或实际利率急剧反向时缩小仓位；只卖浮动仓，保留5%战略对冲底仓。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>受实际利率、美元、避险情绪与央行购金共同驱动，不是权益的稳定反向镜像；T+0便利会放大过度交易。</li>
+<li><b>覆盖完整性：</b>下行止于 6.761 元，与理论边界 6.673 元相差 0.0882 元（0.99%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 4.00% ÷ 往返成本 0.14% = 28.6 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>512800｜银行ETF华宝<span class="small">　再平衡优先｜再平衡优先</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">0.833 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+12% / −15%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.1000 / 0.1249 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.025 元</b></td><td>方案B：<code>0.1000 ÷ 4 = 0.02500 → 取整 0.025</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">3.00%</td><td>落在 再平衡优先 类别建议区间 3.0%—4.5%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>0.933 元</b></td><td><code>0.833 + 4 × 0.025</code></td></tr>
+<tr><td>理论下边界</td><td class="n">0.708 元</td><td><code>0.833 − 0.1249</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>0.733 元</b></td><td><code>N_down=⌊0.1249÷0.025⌋=4</code>；<code>0.833 − 4 × 0.025</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0249 元（3.00%）</td><td>跌破 0.733 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">3.00% ÷ 0.19% = <b>15.8 倍</b></td><td>单日成交额 5—20亿元，额外滑点 +0.05%</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（4 档，由近及远）：</b><br>
+<span>第1档 0.858</span>
+<span>第2档 0.883</span>
+<span>第3档 0.908</span>
+<span>第4档 0.933</span>
+</div><div class="lad dn"><b>下方买入档（4 档，由近及远）：</b><br>
+<span>第1档 0.808</span>
+<span>第2档 0.783</span>
+<span>第3档 0.758</span>
+<span>第4档 0.733</span>
+</div>
+<h4>判断依据</h4><p>跟踪中证银行；收盘0.833元，52周高/低0.860/0.728元，近60日+13.03%；绝对PE约7倍、PB约0.69倍，但历史 PE/PB 分位接近高位，红利重估已较充分。</p>
+<h4>启动前提</h4><p>优先按目标权重±20%—25%偏离带做季度再平衡；若仍要做交易，仅用少量低频浮动仓。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>缺口3.00%：0.733元以下不得继续加档；低波不等于无回撤，红利重估逆转时传统网格的单格毛利会被摩擦成本吃掉。</li>
+<li><b>覆盖完整性：</b>下行止于 0.733 元，与理论边界 0.708 元相差 0.0249 元（3.00%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 3.00% ÷ 往返成本 0.19% = 15.8 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>512890｜红利低波ETF华泰柏瑞<span class="small">　再平衡优先｜再平衡优先</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">1.182 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+12% / −15%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">0.1418 / 0.1773 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>0.035 元</b></td><td>方案B：<code>0.1418 ÷ 4 = 0.03545 → 取整 0.035</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">2.96%</td><td>落在 再平衡优先 类别建议区间 3.0%—4.5%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>1.322 元</b></td><td><code>1.182 + 4 × 0.035</code></td></tr>
+<tr><td>理论下边界</td><td class="n">1.005 元</td><td><code>1.182 − 0.1773</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>1.007 元</b></td><td><code>N_down=⌊0.1773÷0.035⌋=5</code>；<code>1.182 − 5 × 0.035</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0023 元（0.19%）</td><td>跌破 1.007 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">2.96% ÷ 0.26% = <b>11.4 倍</b></td><td>单日成交额 2—5亿元，额外滑点 +0.12%</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（4 档，由近及远）：</b><br>
+<span>第1档 1.217</span>
+<span>第2档 1.252</span>
+<span>第3档 1.287</span>
+<span>第4档 1.322</span>
+</div><div class="lad dn"><b>下方买入档（5 档，由近及远）：</b><br>
+<span>第1档 1.147</span>
+<span>第2档 1.112</span>
+<span>第3档 1.077</span>
+<span>第4档 1.042</span>
+<span>第5档 1.007</span>
+</div>
+<h4>判断依据</h4><p>跟踪中证红利低波；收盘1.182元，52周高/低1.248/1.062元，近60日+9.55%；PE约8.5倍、PB约0.87倍、股息率约4.31%，但估值历史分位已在中高区间。</p>
+<h4>启动前提</h4><p>采用战略底仓与季度再平衡；若做交易，只在权重明显偏离目标时一次调整，不设连续自动买卖。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>单格毛利/成本倍数11.4倍，为17只中最低，是“适合持有但不宜网格”的量化证据；高股息拥挤度反转时低波因子也会系统性回撤。</li>
+<li><b>覆盖完整性：</b>下行止于 1.007 元，与理论边界 1.005 元相差 0.0023 元（0.19%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 2.96% ÷ 往返成本 0.26% = 11.4 倍，达标（≥3倍）。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+<div class="etf">
+<h3>511260｜十年国债ETF国泰<span class="small">　仅再平衡｜仅再平衡</span></h3>
+<div class="scroll"><table><thead><tr><th>项目</th><th>数值</th><th>取值来源 / 推导</th></tr></thead><tbody>
+<tr><td>当前参考价 P₀</td><td class="n">134.805 元</td><td>westock-data 收盘价，2026-09-23</td></tr>
+<tr><td>最大上行 / 下行</td><td class="n">+2% / −2%</td><td>基于当日行情、估值位置与波动特征推导的最大浮动范围</td></tr>
+<tr><td>向上/向下宽度</td><td class="n">2.6961 / 2.6961 元</td><td><code>P₀×U%</code>、<code>P₀×D%</code></td></tr>
+<tr><td><b>步长 step</b></td><td class="n"><b>1.348 元</b></td><td>方案B：<code>2.6961 ÷ 2 = 1.34805 → 取整 1.348</code>（最小变动单位 0.001 元）</td></tr>
+<tr><td>步长占价格比</td><td class="n">1.00%</td><td>落在 仅再平衡 类别建议区间 0.5%—1.0%</td></tr>
+<tr><td><b>上边界</b></td><td class="n"><b>137.501 元</b></td><td><code>134.805 + 2 × 1.348</code></td></tr>
+<tr><td>理论下边界</td><td class="n">132.109 元</td><td><code>134.805 − 2.6961</code>（风险容忍线，不挂单）</td></tr>
+<tr><td><b>可执行下沿</b></td><td class="n"><b>132.109 元</b></td><td><code>N_down=⌊2.6961÷1.348⌋=2</code>；<code>134.805 − 2 × 1.348</code></td></tr>
+<tr><td>未覆盖缺口</td><td class="n">0.0001 元（0.00%）</td><td>跌破 132.109 元即红灯处理</td></tr>
+<tr><td>单格毛利 / 往返成本</td><td class="n">1.00% ÷ 0.34% = <b>2.9 倍</b></td><td>成交额数据未覆盖，按最保守口径加 0.20%</td></tr>
+</tbody></table></div>
+<h4>完整档位（每档一个固定份额块，不得倍投）</h4>
+<div class="lad up"><b>上方卖出档（2 档，由近及远）：</b><br>
+<span>第1档 136.153</span>
+<span>第2档 137.501</span>
+</div><div class="lad dn"><b>下方买入档（2 档，由近及远）：</b><br>
+<span>第1档 133.457</span>
+<span>第2档 132.109</span>
+</div>
+<h4>判断依据</h4><p>跟踪10年期国债；收盘134.805元，近20日仅+0.37%，当日振幅约0.03%，RSI短期偏高。</p>
+<h4>启动前提</h4><p>使用目标权重±2%—3%价格带或按久期风险再平衡；本表参数用于验证“不适合网格”，不建议实际挂单。</p><p class="src">共同前提：价格基准为 2026-09-23 收盘（换日必须整体重算）；最小变动单位 0.001 元；交易成本按双边佣金万分之二+双边滑点 0.10% 的假设值（免印花税，须按券商实际费率复核）；流动性按单日成交额口径（非20日中位）；涨跌幅限制 10%；每次只成交 1 个固定份额块，跳空跨多档当日最多成交 1 档。</p>
+<h4>主要风险</h4><ul>
+<li>单格毛利/成本倍数仅2.9倍，低于3倍门槛；看似低波却会受利率快速上行影响产生方向性回撤。</li>
+<li><b>覆盖完整性：</b>下行止于 132.109 元，与理论边界 132.109 元相差 0.0001 元（0.00%）；该区间按红灯处理，不得视为“还可再买一格”。</li>
+<li><b>步长失配：</b>单格毛利 1.00% ÷ 往返成本 0.34% = 2.9 倍，<b>不达标，应改用再平衡</b>。低于 3 倍应拉大间距或放弃该标的。</li>
+<li><b>极端行情：</b>单日 10% 涨跌幅限制下急跌可一次跨越多档；当日只执行 1 档，且跌破下沿后不得以任何形式继续摊平；T+1 标的当日买入不可当日卖出。</li>
+<li><b>结构性失效：</b>若跟踪指数逻辑、基金申赎安排或流动性发生实质变化，全部档位即刻作废，须重新定锚 P₀，而不是在原档位上继续。</li>
+</ul></div>
+</section><section><h2>八、订单状态机与执行规则</h2>
+<div class="scroll"><table><thead><tr><th>动作</th><th>明确规则</th></tr></thead><tbody>
+<tr><td>买入</td><td>价格由上向下首次触及未成交下方档，以限价买入 1 个份额块 q；跳空多档时当日最多 1 个 q，防止急跌日集中接刀。</td></tr>
+<tr><td>卖出</td><td>价格由下向上触及对应上方档，卖出此前买入的 1 个 q；<b>只能卖可卖份额</b>，T+1 股票ETF不能假设当日买入、当日卖出。</td></tr>
+<tr><td>止盈</td><td>上边界以上不追涨；浮动仓按规则逐步卖出后停止新增卖单，保留底仓，等待月度重建而非立刻追买。</td></tr>
+<tr><td>时间止损</td><td>若浮动仓在预设观察期内长期未形成完整回转，且趋势/流动性同步恶化，取消该网格并重新评估标的，而非无期限占用资金。</td></tr>
+<tr><td>券商自动网格</td><td>T+1 股票ETF的“卖出档”必须以已持有可卖份额为上限；跨境 T+0 ETF应设置溢价率过滤，避免在 IOPV 偏离明显时被动成交。</td></tr>
+<tr><td>成本检验</td><td>任一单格预期毛利至少覆盖双边佣金、最低收费、滑点与预留误差，尽量达到总交易成本的 3 倍以上；否则拉大间距、提升单格金额或放弃该标的。</td></tr>
+</tbody></table></div></section>
+
+<section><h2>九、暂停、止损与重建：三层信号灯</h2>
+<div class="scroll"><table><thead><tr><th>状态</th><th>触发条件</th><th>执行动作</th></tr></thead><tbody>
+<tr><td><span class="pill ok">绿灯：区间有效</span></td><td>价格在设定区间内；流动性和折溢价正常；中期趋势未出现连续破坏。</td><td>按网格执行，但持续受单日一格、最大仓位和现金底线约束。</td></tr>
+<tr><td><span class="pill wait">黄灯：趋势走弱</span></td><td>连续 2 个收盘日跌破关键下方阈值；20日均线低于60日均线并继续向下；或出现持续折溢价、成交收缩。</td><td>取消最深两档或停止所有新买单；保留已持仓；上方卖单仍可执行以降低浮动仓；由每日观察降为每周复核。</td></tr>
+<tr><td><span class="pill stop">红灯：区间失效</span></td><td>收盘有效跌破<b>可执行下沿</b>且连续 2 日未收回；指数逻辑、基金申赎或流动性出现重大变化；账户级最大风险仓位触顶。</td><td>撤销全部未成交买单，冻结网格；按预设顺序削减浮动仓或退出战术仓；底仓是否保留需按长期逻辑另行评估，不能自动补仓。</td></tr>
+</tbody></table></div>
+<div class="note red"><b>止损不等于“全部清仓”。</b>网格策略至少需要价格、逻辑、时间三层失效条件。价格触发先暂停买入；产品/指数逻辑发生根本变化时才评估是否处理底仓；最忌讳触发后临时放宽规则、把网格变成无限期摊平。</div>
+<ul><li><b>组合止损：</b>自动网格已占用资金较计划超出 20%，或总权益出现预设回撤，即冻结新买单。</li><li><b>恢复条件：</b>必须基于趋势或广度改善，不以价格反弹一日为准。</li><li><b>复核频率：</b>每日查订单、现金与溢价；每周查区间是否失效；每季度调整战略权重与重建 P₀。</li></ul></section>
+
+<section><h2>十、不同市场行情下的调整规则</h2>
+<div class="scroll"><table><thead><tr><th>行情</th><th>策略表现</th><th>调整规则</th><th>不要做什么</th></tr></thead><tbody>
+<tr><td>区间震荡</td><td>最适合，浮动仓可反复回转，底仓保留β。</td><td>A500/中证500常开；成长类最多选1只；行业卫星最多选1只。每月统计已实现网格收益与交易成本，成本侵蚀显著则拉大间距。</td><td>不因短期成交频繁而加密网格或扩大总仓；连续3次未形成完整买卖闭环要检查档距或趋势是否改变。</td></tr>
+<tr><td>温和上行</td><td>浮动仓逐步卖出，可能落后满仓持有。</td><td>只卖浮动仓，保留底仓；触及上边界后停止追加卖出，等月度或季度重建中枢；可上移区间但不要每日上移。</td><td>不卖光后追高买回，不动用机动现金追趋势；连续5日收盘高于原上边界且放量时停止继续卖出。</td></tr>
+<tr><td>单边下跌</td><td>前几档能降低成本，总体回撤不可避免。</td><td>黄灯后停止深层买单；停止成长与行业新网格，核心宽基只保留最后两档；现金提升至14%—18%。</td><td>不跨多格加速成交、倍投补仓，不用新资金不断下移下沿；核心指数跌破近120日低点即暂停而非扩网。</td></tr>
+<tr><td>急跌后反弹</td><td>反弹可能快速但持续性不确定，T+1 会放大执行风险。</td><td>先用核心宽基的一档小仓试错；连续 2—3 日止跌且广度改善后再恢复条件网格。</td><td>不把单日反弹当趋势反转并一次性打开所有卫星网格；反弹两日内跌回前低或量能衰减即取消卫星网格。</td></tr>
+<tr><td>风格切换 / 局部抱团</td><td>表面分散但相关性阶段性升高。</td><td>以风险簇而非代码数量计仓；暂停相对强度持续走弱的卫星网格；成长条件网格降至0—5%，底仓向A500、红利低波、银行、国债倾斜。</td><td>不因为“行业ETF跌得多”就认定更具网格价值，不以补仓替代风格切换。</td></tr>
+</tbody></table></div></section>
+
+<section><h2>十一、主要风险、常见误区与建网前清单</h2>
+<div class="scroll"><table><thead><tr><th>风险/误区</th><th>为什么危险</th><th>对应防线</th></tr></thead><tbody>
+<tr><td>把网格收益当作总收益</td><td>已实现差价可能掩盖大额浮亏与仓位膨胀。</td><td>同时记录账户总收益、已实现网格收益、未实现盈亏、现金余额和最大仓位。</td></tr>
+<tr><td>固定金额或倍投补仓</td><td>下跌越深、投入越大，尾部风险非线性放大。</td><td>采用固定份额块 q；最深档暂停而非倍数加仓。</td></tr>
+<tr><td>网格过密</td><td>佣金、最低收费、滑点和税费吞掉毛利。</td><td>单格毛利至少达总交易成本 3 倍以上；先测试成本，再决定间距。</td></tr>
+<tr><td>全仓卖空浮动仓后追涨</td><td>网格在趋势市天然可能落后，追高会破坏纪律。</td><td>底仓不卖；上边界外停止交易，定期而非即时重建。</td></tr>
+<tr><td>忽视 T+1、折溢价和流动性</td><td>订单可能不能按设想回转，或在估值偏离中成交。</td><td>使用可卖份额约束；跨境ETF检查 IOPV；以中位成交额和盘口验证。</td></tr>
+<tr><td>多只同因子 ETF 同时运行</td><td>极端行情下相关性上升，多个网格会同步买入。</td><td>设置风险簇上限；同一主题只选一个交易标的。</td></tr>
+</tbody></table></div>
+<h3>建网前必须写下来的 8 项</h3>
+<ol><li>标的及其长期持有逻辑；</li><li>近20日中位成交额、买卖价差、折溢价与交易成本；</li><li>P₀、上边界、可执行下沿及重建周期；</li><li>每格固定份额 q 与交易单位取整结果；</li><li>初始浮动仓、下方预留、单一ETF最大仓位和账户总上限；</li><li>绿灯、黄灯、红灯的客观触发条件；</li><li>T+1/T+0 限制和成交后的可卖份额规则；</li><li>月度复盘指标及与“底仓＋现金”被动基准的比较方法。</li></ol></section>
+
+<section><h2>十二、回落卖出与反弹买入：触发参数优化</h2>
+<p class="lead">本章在第六章统一步长的基础上，补充两类条件单参数：<b>回落卖出</b>（价格触及上方档位后，自监测高点回落 s% 才卖出）与<b>反弹买入</b>（价格触及下方档位后，自监测低点反弹 b% 才买入）。两者都只改变"到价后何时成交"，不改变第七章的价格档位。</p>
+<div class="note blue"><b>为什么需要这两个参数：</b>如果到价立即成交，日内插针（价格刺破档位瞬间收回）会产生大量"买入当日即亏损/卖出后立刻反弹"的伪信号；等待一段反弹/回落确认，能把这类噪声过滤掉。但等待也不能太久，否则会错过本档、把网格做成趋势单。所以 b 和 s 必须同时参考两个量：<b>本标的的步长</b>（决定容忍上限）和<b>当日振幅</b>（决定噪声下限）。</div>
+<h3>与步长结论的匹配关系（四条硬约束）</h3>
+<div class="scroll"><table><thead><tr><th>约束</th><th>公式</th><th>逻辑</th></tr></thead><tbody>
+<tr><td>① 不跨档</td><td><code>b ≤ 0.50 × 步幅</code>；<code>s ≤ 0.55 × 步幅</code></td><td>反弹/回落一旦超过半个步幅，价格就可能已越过相邻档位，触发语义会混乱（买到下一档、卖到上一档）。</td></tr>
+<tr><td>② 滤噪</td><td><code>b ≥ 0.40 × 当日振幅</code>；<code>s ≥ 0.50 × 当日振幅</code></td><td>低于该比例时，确认信号大概率只是普通日内抖动，会被频繁误触发。</td></tr>
+<tr><td>③ 卖慢买快</td><td><code>s ≥ b</code></td><td>买入的确认要更灵敏（越便宜越好），卖出的确认要更从容（拿住利润），两值保持约 1.4:1。</td></tr>
+<tr><td>④ 品种修正</td><td>20% 涨跌幅限制品种 +0.20pp；单日成交额 <2 亿元 +0.10pp</td><td>跳空风险高或流动性薄的品种，需要更厚的确认来对冲伪突破。</td></tr>
+</tbody></table></div>
+<div class="note amber"><b>取参公式（17只通用）：</b><br>
+<code>b₀ = max(0.25 × 步幅, 0.40 × 当日振幅)</code>　<code>s₀ = max(0.35 × 步幅, 0.50 × 当日振幅)</code><br>
+再做品种修正（20% 限制 +0.20pp、低流动性 +0.10pp），按 0.05 个百分点取整，并用约束①封顶。当约束①与②冲突时（如 511260），以"该标的不适合条件单"为最终结论，不强行取参。</div>
+<h3>分类别建议区间</h3>
+<div class="scroll"><table><thead><tr><th>类别</th><th>反弹买入 b</th><th>回落卖出 s</th><th>设计意图</th></tr></thead><tbody>
+<tr><td>核心宽基（T+1）</td><td>0.6%—0.8%</td><td>0.9%—1.0%</td><td>振幅低，主要按 0.25/0.35 步幅取值，重在稳。</td></tr>
+<tr><td>成长 / 高波动宽基（T+1，部分 20% 限制）</td><td>1.2%—1.3%</td><td>1.6%—1.8%</td><td>20% 涨跌幅限制品种叠加 +0.20pp 跳空修正。</td></tr>
+<tr><td>行业 / 周期 / 题材卫星（T+1）</td><td>1.2%—1.6%</td><td>1.7%—2.2%</td><td>振幅高的（如通信 2.4%）由振幅项主导，确认阈值更厚。</td></tr>
+<tr><td>跨境 T+0（513120、513130）</td><td>约 1.25%</td><td>约 1.75%</td><td>按步幅取值即可；T+0 允许当日反向，无需额外增厚，但必须先过溢价/IOPV 过滤。</td></tr>
+<tr><td>黄金 T+0（518880）</td><td>1.00%</td><td>1.40%</td><td>振幅极小（0.37%），参数几乎全由步幅决定。</td></tr>
+<tr><td>低频人工（159928）</td><td>1.25%</td><td>1.70%</td><td>含 +0.10pp 低流动性修正。</td></tr>
+<tr><td>再平衡型（512800、512890）</td><td>0.75%</td><td>1.05%</td><td>参数存在但建议主要用于低频确认，不改为常开网格的理由。</td></tr>
+<tr><td>债券久期型（511260）</td><td colspan="2"><b>不建议启用条件单</b></td><td>当日振幅 0.03%，任何合理阈值都远大于其自然波动，触发概率趋近于零。</td></tr>
+</tbody></table></div>
+<h3>逐只最终参数（基准价 2026-09-23 收盘）</h3>
+<div class="scroll"><table><thead><tr><th>代码 / 名称</th><th>类别</th><th>步长</th><th>步幅</th><th>当日振幅</th><th>反弹买入 b</th><th>b 折合金额</th><th>回落卖出 s</th><th>s 折合金额</th><th>s ÷ b</th></tr></thead><tbody>
+<tr><td><b>563360</b> A500ETF华泰柏瑞</td><td>核心宽基</td><td class="n">0.033</td><td class="n">2.61%</td><td class="n">0.86%</td><td class="n"><b>0.65%</b></td><td class="n">0.008 元</td><td class="n"><b>0.90%</b></td><td class="n">0.011 元</td><td class="n">1.38</td></tr>
+<tr><td><b>510500</b> 中证500ETF南方</td><td>核心宽基</td><td class="n">0.215</td><td class="n">2.75%</td><td class="n">0.84%</td><td class="n"><b>0.70%</b></td><td class="n">0.055 元</td><td class="n"><b>0.95%</b></td><td class="n">0.074 元</td><td class="n">1.36</td></tr>
+<tr><td><b>159915</b> 创业板ETF易方达</td><td>成长宽基</td><td class="n">0.142</td><td class="n">4.18%</td><td class="n">1.20%</td><td class="n"><b>1.25%</b></td><td class="n">0.042 元</td><td class="n"><b>1.65%</b></td><td class="n">0.056 元</td><td class="n">1.32</td></tr>
+<tr><td><b>588000</b> 科创50ETF华夏</td><td>成长宽基</td><td class="n">0.075</td><td class="n">4.27%</td><td class="n">1.19%</td><td class="n"><b>1.25%</b></td><td class="n">0.022 元</td><td class="n"><b>1.70%</b></td><td class="n">0.030 元</td><td class="n">1.36</td></tr>
+<tr><td><b>512880</b> 证券ETF国泰</td><td>高β成长</td><td class="n">0.053</td><td class="n">4.98%</td><td class="n">1.03%</td><td class="n"><b>1.25%</b></td><td class="n">0.013 元</td><td class="n"><b>1.75%</b></td><td class="n">0.019 元</td><td class="n">1.40</td></tr>
+<tr><td><b>515880</b> 通信ETF国泰</td><td>行业卫星</td><td class="n">0.044</td><td class="n">6.28%</td><td class="n">2.40%</td><td class="n"><b>1.55%</b></td><td class="n">0.011 元</td><td class="n"><b>2.20%</b></td><td class="n">0.015 元</td><td class="n">1.42</td></tr>
+<tr><td><b>513120</b> 港股创新药ETF广发</td><td>跨境T+0</td><td class="n">0.068</td><td class="n">5.00%</td><td class="n">1.99%</td><td class="n"><b>1.25%</b></td><td class="n">0.017 元</td><td class="n"><b>1.75%</b></td><td class="n">0.024 元</td><td class="n">1.40</td></tr>
+<tr><td><b>513130</b> 恒生科技ETF华泰柏瑞</td><td>跨境T+0</td><td class="n">0.027</td><td class="n">4.98%</td><td class="n">1.64%</td><td class="n"><b>1.25%</b></td><td class="n">0.007 元</td><td class="n"><b>1.75%</b></td><td class="n">0.009 元</td><td class="n">1.40</td></tr>
+<tr><td><b>512400</b> 有色金属ETF南方</td><td>周期卫星</td><td class="n">0.086</td><td class="n">5.01%</td><td class="n">1.56%</td><td class="n"><b>1.25%</b></td><td class="n">0.021 元</td><td class="n"><b>1.75%</b></td><td class="n">0.030 元</td><td class="n">1.40</td></tr>
+<tr><td><b>512170</b> 医疗ETF华宝</td><td>行业卫星</td><td class="n">0.017</td><td class="n">4.87%</td><td class="n">1.44%</td><td class="n"><b>1.20%</b></td><td class="n">0.004 元</td><td class="n"><b>1.70%</b></td><td class="n">0.006 元</td><td class="n">1.42</td></tr>
+<tr><td><b>562500</b> 机器人ETF华夏</td><td>题材卫星</td><td class="n">0.046</td><td class="n">4.95%</td><td class="n">1.07%</td><td class="n"><b>1.25%</b></td><td class="n">0.012 元</td><td class="n"><b>1.75%</b></td><td class="n">0.016 元</td><td class="n">1.40</td></tr>
+<tr><td><b>512660</b> 军工ETF国泰</td><td>题材卫星</td><td class="n">0.058</td><td class="n">5.04%</td><td class="n">1.80%</td><td class="n"><b>1.35%</b></td><td class="n">0.016 元</td><td class="n"><b>1.85%</b></td><td class="n">0.021 元</td><td class="n">1.37</td></tr>
+<tr><td><b>159928</b> 消费ETF汇添富</td><td>低频人工</td><td class="n">0.030</td><td class="n">4.57%</td><td class="n">1.22%</td><td class="n"><b>1.25%</b></td><td class="n">0.008 元</td><td class="n"><b>1.70%</b></td><td class="n">0.011 元</td><td class="n">1.36</td></tr>
+<tr><td><b>518880</b> 黄金ETF华安</td><td>黄金T+0</td><td class="n">0.356</td><td class="n">4.00%</td><td class="n">0.37%</td><td class="n"><b>1.00%</b></td><td class="n">0.089 元</td><td class="n"><b>1.40%</b></td><td class="n">0.125 元</td><td class="n">1.40</td></tr>
+<tr><td><b>512800</b> 银行ETF华宝</td><td>再平衡型</td><td class="n">0.025</td><td class="n">3.00%</td><td class="n">1.07%</td><td class="n"><b>0.75%</b></td><td class="n">0.006 元</td><td class="n"><b>1.05%</b></td><td class="n">0.009 元</td><td class="n">1.40</td></tr>
+<tr><td><b>512890</b> 红利低波ETF华泰柏瑞</td><td>再平衡型</td><td class="n">0.035</td><td class="n">2.96%</td><td class="n">0.67%</td><td class="n"><b>0.75%</b></td><td class="n">0.009 元</td><td class="n"><b>1.05%</b></td><td class="n">0.012 元</td><td class="n">1.40</td></tr>
+<tr><td><b>511260</b> 十年国债ETF国泰</td><td>债券久期型</td><td class="n">1.348</td><td class="n">1.00%</td><td class="n">0.03%</td><td class="n"><b>0.25%</b></td><td class="n">0.337 元</td><td class="n"><b>0.35%</b></td><td class="n">0.472 元</td><td class="n">1.40</td></tr>
+</tbody></table></div>
+<p class="src">当日振幅来源：金融数据检索（westock-data）2026-09-23 当日（最高−最低）/昨收，为单日样本，非20日均值，重建参数时应以近20日振幅中位数替换复核；b、s 为本章公式计算值。</p>
+<h3>使用方式（与第七章档位如何配合）</h3>
+<ol>
+<li><b>激活点＝档位价。</b>以第七章的档位价作为监测起点，不是把 b/s 直接叠加到 P₀ 上。</li>
+<li><b>反弹买入：</b>价格触及下方第 i 档后开始盯最低价；自该低点反弹 <code>b%</code> 时，以限价买入 1 个份额块 q；若跌破该档后一路向下未达 b%，则<b>不成交</b>，等待下一档（但同一交易日最多成交 1 档的规则仍然生效）。</li>
+<li><b>回落卖出：</b>价格触及上方第 i 档后开始盯最高价；自该高点回落 <code>s%</code> 时，卖出此前买入的 1 个 q；若直接冲过该档且未回落 s%，则<b>不成交</b>，继续持股等待更高档。</li>
+<li><b>与红灯的关系：</b>价格跌破"可执行下沿"时，无论是否曾触发 b，一律按红灯处理，撤销全部未成交买单。</li>
+<li><b>与 T+1 的关系：</b>反弹买入成交的份额当日不可卖出；券商条件单的卖出腿必须以已持有可卖份额为上限。</li>
+</ol>
+<h3>主要风险</h3>
+<ul>
+<li><b>触发迟钝风险：</b>强趋势日中，价格可能一次性穿越多档而不回落 s%，导致"该卖没卖"；这正是拿住利润的设计，但也意味着上行端必然部分踏空——接受这一点，不要为了抓趋势把 s 调小到约束②以下。</li>
+<li><b>触发过频风险：</b>若把 b 调到 0.40×振幅 以下，插针会反复激活条件单，单日可能连触数档并突破"当日 1 档"纪律；阈值只能上调、不能随意下调。</li>
+<li><b>振幅样本风险：</b>本章振幅为 2026-09-23 单日值；若标的进入明显更安静或更狂暴的阶段（如财报、政策窗口），应以近 20 日振幅中位数重算，b、s 需要同步迁移，不能只重算步长。</li>
+<li><b>跨境品种附加风险：</b>513120、513130 的 b/s 触发发生在 A 股交易时段，但底层港股已提前定价，触发价可能与 IOPV 出现偏离，须叠加溢价率过滤。</li>
+<li><b>511260：</b>参数表中的 0.25%/0.35% 仅为口径完整性而列示，结论是<b>不启用条件单</b>。</li>
+</ul></section>
+<section><h2>最终结论</h2>
+<div class="note green"><b>真正可以“长期常开”的只有 563360 与 510500。</b>其余标的即使估值有吸引力，也必须接受：高波动题材的宽范围应该对应更小的交易资金、更少的预挂订单和更严格的暂停条件，而不是更大的仓位。银行、红利低波与十年国债的正确答案也不是把网格做得更密，而是承认其更适合承担底仓、久期或再平衡功能——这在量化上也能验证：512890 的单格毛利/成本倍数仅 11.4 倍，511260 仅 2.9 倍且日振幅 0.03%，均不具备常规网格价值。</div>
+<div class="note amber"><b>反向提醒：</b>不要因为某只 ETF 的下方缺口看起来“只差一点点”，就把最后一格手动往下挪去迁就理论边界。那样等于把统一步长退回百分比思维，价格回访时的对称性会再次失真；正确做法是接受缺口、以可执行下沿为红灯线，并在月度重建时统一迁移 P₀。</div>
+<p class="src">数据来源与时点：当前参考价、当日成交额、52周高低、阶段涨跌与技术指标取自金融数据检索（westock-data），时点 2026-09-23 收盘；中证A500、科创50等指数估值时点 2026-09-22；部分历史估值分位为第三方公开数据汇总口径，回溯长度不一，实盘前须以基金公司、指数公司或交易终端复核。交易成本与滑点惩罚为假设输入而非实测数据。全部边界价格为策略阈值，不是交易所或基金公司披露的一手价格。</p></section>
+<footer class="foot"><b>免责声明</b>：以上内容基于公开数据和量化分析，仅供参考，不构成投资建议。市场有风险，投资需谨慎。任何投资决策应结合个人风险承受能力、资金状况和投资目标独立判断，必要时咨询持牌专业机构。过往表现不预示未来收益。</footer><script>
+var chart = echarts.init(document.getElementById('chart1'));
+chart.setOption({
+  tooltip: { trigger: 'axis', valueFormatter: function (v) { return v + '%'; } },
+  legend: { data: ['单格步幅', '类别步幅下限', '下方未覆盖缺口'] },
+  grid: { left: 50, right: 40, top: 50, bottom: 90 },
+  xAxis: { type: 'category', data: ["563360", "510500", "159915", "588000", "512880", "515880", "513120", "513130", "512400", "512170", "562500", "512660", "159928", "518880", "512800", "512890", "511260"], axisLabel: { rotate: 45 } },
+  yAxis: [ { type: 'value', name: '百分比(%)' } ],
+  series: [
+    { name: '单格步幅', type: 'bar', data: [2.61, 2.75, 4.18, 4.27, 4.98, 6.28, 5.0, 4.98, 5.01, 4.87, 4.95, 5.04, 4.57, 4.0, 3.0, 2.96, 1.0], itemStyle: { color: '#2675b9' } },
+    { name: '类别步幅下限', type: 'line', symbol: 'none', data: [2.5, 2.5, 4.0, 4.0, 4.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 5.0, 3.5, 3.5, 3.0, 3.0, 0.5], itemStyle: { color: '#ac7414' }, lineStyle: { type: 'dashed' } },
+    { name: '下方未覆盖缺口', type: 'line', data: [1.74, 0.25, 0.76, 0.81, 0.14, 0.62, 0.02, 0.11, 4.96, 0.64, 0.24, 4.83, 1.71, 0.99, 3.0, 0.19, 0.0], itemStyle: { color: '#bf3f42' }, symbolSize: 7 }
+  ]
+});
+</script></main></body></html>
