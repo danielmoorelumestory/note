@@ -46,6 +46,14 @@ const tocHeadings = headings.filter((h) => h.depth === 2 || h.depth === 3);
         }
       </header>
 
+      {
+        note.data.report && (
+          <a class="report-link" href={href(note.data.report)}>
+            打开完整报告（HTML，含图表）<span aria-hidden="true">→</span>
+          </a>
+        )
+      }
+
       <div class="prose">
         <Content />
       </div>
