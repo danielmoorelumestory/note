@@ -427,6 +427,8 @@ const savedUrl = href('lab/grid-trading/saved');
     });
 
     document.querySelector('#restore-removed')!.addEventListener('click', () => {
+      const count = record?.removedTrades?.length ?? 0;
+      if (!count || !confirm(`确认恢复已删除的 ${count} 条网格成交？\n恢复后这些成交会重新计入总盈亏、持仓和占用本金，下一格买卖价也可能随之变化。`)) return;
       commit(item => ({ ...item, removedTrades: [] })).catch(() => showNote('行情获取失败，请稍后重试'));
     });
     document.querySelector('#trades')!.addEventListener('click', event => {
