@@ -39,7 +39,7 @@ const savedUrl = href('lab/grid-trading/saved');
     </div>
   </section>
   <section class="history"><h2>历史成交</h2><p id="history-hint">成交价格、成交金额、成交份额可直接修改为真实成交值（如按 100 份整数倍成交），修改份额时金额按“份额 × 成交价”计算；修改后该笔及之后的持仓、盈亏、网格价位会重新计算，并自动同步到云端。持仓市值按该笔成交价估值；“当时占用本金”仅统计成交金额，不含手续费，其最高值与回测摘要中的“最多使用本金”一致。最新成交在最上方。</p>
-    <p id="history-hint2">可添加或删除成交记录（建仓不可删除）：添加时填写日期、方向、成交价格和成交份额，其余数据自动计算并按日期排入列表。增删只影响总盈亏、持仓和占用本金，不改动其他成交行；只有最上面（最新）的一条变化时，才会改变下一格买卖价的基准。</p>
+    <p id="history-hint2">可添加或删除成交记录（建仓不可删除）：添加时填写日期、方向、成交价格和成交份额，其余数据自动计算并按日期排入列表。增删只影响总盈亏、持仓和占用本金，不改动其他成交行；只有最上面（最新）的一条变化时（新增了更新的成交，或删掉了最新的成交），才会改变下一格买卖价的基准，并且该条之后的交易日会按网格从它的成交价重新判断，之后被删除过的成交日视为当天没有成交。</p>
     <div class="trade-tools"><button id="add-trade-toggle" class="tool-button" type="button">＋ 添加记录</button><button id="restore-removed" class="tool-link" type="button" hidden></button></div>
     <form id="trade-form" class="trade-form" hidden novalidate>
       <label>日期 <input id="tf-date" type="date" required></label>
@@ -154,13 +154,15 @@ const savedUrl = href('lab/grid-trading/saved');
       document.querySelector('#title')!.append(badge);
       subtitle.textContent = `备份于 ${backupLabelOf(viewBackup)} · 备份日 ${viewBackup.date} 之后完全按网格买卖 · ${detailLine}`;
     } else subtitle.textContent = detailLine;
-    // 预计买卖价是固定成交价，日内高低价触及即执行。
+    // 反弹买入 / 回落卖出：跌破（突破）步长线后，从最低点反弹（最高点回落）够了才成交，成交价为“最低点 + 反弹”（“最高点 − 回落”）。
     const current = result.current;
-    const buyReached = current <= result.nextBuy, sellReached = current >= result.nextSell;
+    const buyArmed = result.lowSince !== undefined, sellArmed = result.highSince !== undefined;
+    const buyReached = buyArmed, sellReached = sellArmed; // 已跌破（突破）步长线、等待反弹（回落）时高亮
     const gap = (target: number) => `距现价 ${formatPercent((target - current) / current)}`;
     const moveLine = (label: string, value: number) => `${label} ¥${value.toFixed(3)} · 占现价 ${(value / current * 100).toFixed(2)}%`;
-    const buyHint = [buyReached ? `已达到买入价 ¥${result.nextBuy.toFixed(3)}` : `价格达到 ¥${result.nextBuy.toFixed(3)} 即买入 · ${gap(result.nextBuy)}`, moveLine('反弹', row.rebound)];
-    const sellHint = [sellReached ? `已达到卖出价 ¥${result.nextSell.toFixed(3)}` : `价格达到 ¥${result.nextSell.toFixed(3)} 即卖出 · ${gap(result.nextSell)}`, moveLine('回落', row.pullback)];
+    const buyLine = tick(result.lastTrade - row.step), sellLine = tick(result.lastTrade + row.step);
+    const buyHint = [buyArmed ? `已跌破步长线 · 最低 ¥${result.lowSince!.toFixed(3)} · 反弹到 ¥${result.nextBuy.toFixed(3)} 即买入 · ${gap(result.nextBuy)}` : `需先跌到 ¥${buyLine.toFixed(3)}，再反弹 ¥${row.rebound.toFixed(3)} 即买入 · ${gap(buyLine)}`, moveLine('反弹', row.rebound)];
+    const sellHint = [sellArmed ? `已突破步长线 · 最高 ¥${result.highSince!.toFixed(3)} · 回落到 ¥${result.nextSell.toFixed(3)} 即卖出 · ${gap(result.nextSell)}` : `需先涨到 ¥${sellLine.toFixed(3)}，再回落 ¥${row.pullback.toFixed(3)} 即卖出 · ${gap(sellLine)}`, moveLine('回落', row.pullback)];
     const hint = (lines: string[]) => lines.map(line => `<span class="step-hint">${line}</span>`).join('');
     document.querySelector('#stats')!.innerHTML = `
       <div><span>当前价格</span><strong>${price(current)}</strong></div>
@@ -435,7 +437,7 @@ const savedUrl = href('lab/grid-trading/saved');
       const button = (event.target as HTMLElement).closest('.delete-trade') as HTMLButtonElement | null;
       if (!button) return;
       const isTop = button.dataset.top === '1', key = button.dataset.key!;
-      const tip = `确认删除这条成交记录？\n删除只影响总盈亏、持仓和占用本金，不改动其他成交行。${isTop ? '\n这是最新的一条，删除后下一格买卖价将以上一条成交价为基准。' : ''}`;
+      const tip = `确认删除这条成交记录？\n删除只影响总盈亏、持仓和占用本金，不改动其他成交行。${isTop ? '\n这是最新的一条，删除后这一天视为没有成交，下一格买卖价将以上一条成交价为基准，其后的交易日会按网格重新判断。' : ''}`;
       if (!confirm(tip)) return;
       button.disabled = true;
       commit(item => button.dataset.kind === 'manual'

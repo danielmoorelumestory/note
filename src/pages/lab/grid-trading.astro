@@ -12,7 +12,7 @@ import { href } from '../../lib/url';
 
   <section class="notice" aria-label="计算说明">
     <span>计算口径</span>
-    <p>下次买入价为上次成交价减网格步长加反弹买入；下次卖出价为上次成交价加网格步长减回落卖出。日内最低价或最高价触及对应价格即成交，不要求先跌破或突破步长线。每次网格成交的份额按（每格金额 − 交易费用）÷ 成交价向下取整到 100 股的整数倍，不足一手则不成交，成交金额 = 份额 × 成交价。ETF 买卖佣金按万分之 1.5、单笔最低 ¥5；A 股卖出另计 0.05% 印花税，ETF 免印花税。为简化处理，每个交易日最多成交一笔；同一日同时触及买卖价时按买入优先。如与实际成交有出入，可在详情页手动修正成交价格、金额、份额，或增删记录。</p>
+    <p>买入：自上次成交起记录最低价，最低价跌到“上次成交价 − 网格步长”之后，只要某个交易日的最高价达到“最低点 + 反弹买入”，就按“最低点 + 反弹买入”成交；卖出对称：最高价涨到“上次成交价 + 网格步长”之后，某个交易日的最低价回落到“最高点 − 回落卖出”，就按该价成交。最低（最高）点跨交易日累计，成交价限制在当日最低价与最高价之间。日线看不出当天先低后高还是先高后低，反弹（回落）按当日最高（最低）价是否到达来判断。每次网格成交的份额按（每格金额 − 交易费用）÷ 成交价向下取整到 100 股的整数倍，不足一手则不成交，成交金额 = 份额 × 成交价。ETF 买卖佣金按万分之 1.5、单笔最低 ¥5；A 股卖出另计 0.05% 印花税，ETF 免印花税。为简化处理，每个交易日最多成交一笔；同一日同时触及买卖价时按买入优先。如与实际成交有出入，可在详情页手动修正成交价格、金额、份额，或增删记录。</p>
   </section>
 
   <div class="toolbar">
@@ -53,7 +53,7 @@ import { href } from '../../lib/url';
 
 <script>
   import {
-    calculateGrid, getCandles, fetchQuotes, mergeQuote, renderEquityChart, saveRecord, holdingValue, blockCopy,
+    calculateGrid, getCandles, fetchQuotes, mergeQuote, renderEquityChart, saveRecord, holdingValue, blockCopy, tick,
     type Candle, type GridParams, type GridResult, type SavedRecord,
   } from '../../lib/grid-trading';
 
@@ -114,12 +114,13 @@ import { href } from '../../lib/url';
     const lastTradePrice = result.lastTrade ?? row.initialPrice;
     const currentPrice = result.current;
     const step = row.step;
-    const buyStepTarget = typeof lastTradePrice === 'number' && typeof step === 'number' ? lastTradePrice - step : undefined;
-    const sellStepTarget = typeof lastTradePrice === 'number' && typeof step === 'number' ? lastTradePrice + step : undefined;
-    const buyStepReached = typeof currentPrice === 'number' && typeof buyStepTarget === 'number' && currentPrice <= buyStepTarget;
-    const sellStepReached = typeof currentPrice === 'number' && typeof sellStepTarget === 'number' && currentPrice >= sellStepTarget;
-    const buyHint = buyStepReached ? '已达步长 · 待反弹' : (buyStepTarget !== undefined ? `需跌破 ¥${buyStepTarget.toFixed(3)}` : '—');
-    const sellHint = sellStepReached ? '已达步长 · 待回撤' : (sellStepTarget !== undefined ? `需冲破 ¥${sellStepTarget.toFixed(3)}` : '—');
+    const buyStepTarget = typeof lastTradePrice === 'number' && typeof step === 'number' ? tick(lastTradePrice - step) : undefined;
+    const sellStepTarget = typeof lastTradePrice === 'number' && typeof step === 'number' ? tick(lastTradePrice + step) : undefined;
+    // 已跌破（突破）步长线、等待反弹（回落）：以回测里跟踪到的最低（最高）点为准，而不是只看现价。
+    const buyStepReached = result.lowSince !== undefined;
+    const sellStepReached = result.highSince !== undefined;
+    const buyHint = buyStepReached ? `已跌破步长线 · 最低 ¥${result.lowSince!.toFixed(3)} · 待反弹` : (buyStepTarget !== undefined ? `需跌破 ¥${buyStepTarget.toFixed(3)}` : '—');
+    const sellHint = sellStepReached ? `已突破步长线 · 最高 ¥${result.highSince!.toFixed(3)} · 待回落` : (sellStepTarget !== undefined ? `需冲破 ¥${sellStepTarget.toFixed(3)}` : '—');
 
     put('#res-name', row.name || row.code);
     put('#res-code', row.code);

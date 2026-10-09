@@ -33,7 +33,11 @@ export type ManualTrade = { id: string; date: string; side: '买入' | '卖出';
 // 手动增删只叠加到总盈亏、持仓和占用本金上，不改动已有成交行的数据。
 // anchor：备份对比用的“续跑锚点”——备份日之后的第一个交易日，上次成交价重置为 price（备份时列表最上面一条的价格），
 // 使纯网格续跑真正从备份点出发。
-export type Adjustments = { price?: Overrides; amount?: Overrides; shares?: Overrides; params?: ParamStage[]; manual?: ManualTrade[]; removed?: string[]; anchor?: { after: string; price: number } };
+// resim：默认开启。列表里最新的一行不是模拟的最后一笔时（手动录入了更新的成交，或最新的网格成交被删除），
+// 以它的成交价为锚点，其后的交易日按网格重新模拟；只针对最新一行，中间行的删除/录入不影响其他成交行。
+// 备份快照与备份续跑传 false，保持备份时冻结的口径。
+// skip：只在锚点之后生效，列出“当天视为没有成交”的日期（最新一行之后被删除过的成交日），内部使用。
+export type Adjustments = { price?: Overrides; amount?: Overrides; shares?: Overrides; params?: ParamStage[]; manual?: ManualTrade[]; removed?: string[]; anchor?: { after: string; price: number }; resim?: boolean; skip?: string[] };
 
 // 备份：冻结备份时刻的全部输入（参数、修正、手动增删、参数历史）和关键结果。
 // 之后可用冻结的输入在最新行情上“纯网格续跑”，与当前（含手动微调）的实际数据对比收益。
@@ -86,9 +90,9 @@ export const marketSessionOpen = () => {
 };
 export const isEtf = (code: string) => /^(5\d{5}|1[5-8]\d{4})$/.test(code.trim());
 /** ETF 每笔买卖佣金按成交额万分之 1.5 计算，最低收取 ¥5；股票维持原比例佣金及卖出印花税口径。 */
-// 计算规则版本：2 = 网格成交按（每格金额 − 交易费用）取整到 100 股整数倍；3 曾允许同日买卖，已取消；4 = 每个交易日最多成交一笔（买入优先）。
+// 计算规则版本：2 = 网格成交按（每格金额 − 交易费用）取整到 100 股整数倍；3 曾允许同日买卖，已取消；4 = 每个交易日最多成交一笔（买入优先）；5 = 反弹买入/回落卖出：跨日跟踪最低/最高点，跌破（突破）步长线后从极值反弹（回落）才成交，成交价为“极值 ± 反弹/回落”。
 // 备份冻结的是当时按旧规则算出的快照，规则升级后需按新规则重算，否则与纯网格续跑无法对比。
-export const RULES_VERSION = 4;
+export const RULES_VERSION = 5;
 const LOT_SIZE = 100;
 const commission = (code: string, amount: number) => isEtf(code) ? Math.max(5, amount * FEE_RATE) : amount * FEE_RATE;
 // 上交所 ETF / 股票以 5、6、9 开头；其余按深交所处理。
@@ -260,8 +264,11 @@ export function withParamChange(record: SavedRecord, patch: Partial<Pick<GridPar
 }
 
 /**
- * 按日线模拟网格：反弹买入、回落卖出直接计入固定的下一格成交价。
- * 日内最低价触及买入价、或日内最高价触及卖出价，即按该价格成交；不要求先跌破/突破步长线后再反转。
+ * 按日线模拟网格：反弹买入、回落卖出。
+ * 自上次成交（或续跑锚点）起跨日跟踪最低价/最高价：最低价跌到“上次成交价 − 步长”以下后，某天最高价 ≥ 最低点 + 反弹，
+ * 就按“最低点 + 反弹”买入；最高价涨到“上次成交价 + 步长”以上后，某天最低价 ≤ 最高点 − 回落，就按“最高点 − 回落”卖出。
+ * 成交价限制在当日最低价与最高价之间；成交后清空跟踪，每个交易日最多一笔，同日两侧都满足时买入优先。
+ * 日线看不出当天先低后高还是先高后低，反弹/回落按“当日最高价/最低价是否到达”的宽松口径判断。
  * 有手动修正时按真实成交价/金额/份额成交，成交价同时作为后续网格基准；model* 记录原计算值。
  */
 function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustments): GridResult {
@@ -299,6 +306,7 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
   let cash = -openingFee, shares = openingFill.quantity, cost = openingAmount + openingFee, capitalUsed = openingAmount, maxCapital = capitalUsed;
   let lastTrade = opening.price, lastTradeDate = row.date, realized = 0, buys = 0, sells = 0;
   let anchored = !adjustments.anchor;
+  const skipAfterAnchor = new Set(adjustments.anchor ? adjustments.skip ?? [] : []);
   // 接口在非交易日会从下一交易日开始返回；该首个实际交易日视为建仓日，建仓当笔总盈亏按其收盘价结算。
   const openingCandle = candles.find(candle => candle.date >= row.date), openingDay = openingCandle?.date;
   const trades: Trade[] = [{ date: row.date, side: '建仓', ...opening, ...openingFill, shares, capitalUsed, pnl: cash + shares * (openingCandle?.close ?? opening.price) - openingAmount }];
@@ -326,27 +334,41 @@ function simulateGrid(row: GridParams, candles: Candle[], adjustments: Adjustmen
       lastTrade = tradePrice; lastTradeDate = date; sells++;
       trades.push({ date, side: '卖出', ...fill, ...amountFill, amount: proceeds, quantity, shares, capitalUsed, pnl: cash + shares * tradePrice - openingAmount });
     }
-    return true;
+    return quantity > 0; // 没有持仓可卖时不成交
   };
+  // 自上次成交（或续跑锚点）起的最低价/最高价，成交入账后清空。
+  let runLow: number | undefined, runHigh: number | undefined;
   for (const candle of candles) {
     // 建仓日只按建仓价建立初始仓位，不读取当日高低价，也不触发网格。
     if (candle.date !== openingDay) {
-      // 续跑锚点：备份日之后的第一个交易日起，以备份时最上面一条的价格为上次成交价。
-      if (!anchored && candle.date > adjustments.anchor!.after) { lastTrade = adjustments.anchor!.price; anchored = true; }
-      const params = paramsAt(candle.date);
-      const buyPrice = tick(lastTrade - params.step + params.rebound);
-      const sellPrice = tick(lastTrade + params.step - params.pullback);
-      // 一根日线不能得知先后顺序；同日两侧均触及时沿用买入优先、每日最多一笔的保守约定。
-      if (candle.low <= buyPrice) buy(candle.date, buyPrice);
-      else if (candle.high >= sellPrice) sell(candle.date, sellPrice);
+      // 续跑锚点：备份日之后的第一个交易日起，以备份时最上面一条的价格为上次成交价，并重新累计最低/最高价。
+      if (!anchored && candle.date > adjustments.anchor!.after) { lastTrade = adjustments.anchor!.price; anchored = true; runLow = runHigh = undefined; }
+      const params = paramsAt(candle.date), low = tick(candle.low), high = tick(candle.high);
+      runLow = Math.min(runLow ?? low, low); runHigh = Math.max(runHigh ?? high, high);
+      const buyArmed = runLow <= tick(lastTrade - params.step), sellArmed = runHigh >= tick(lastTrade + params.step);
+      const buyTrigger = tick(runLow + params.rebound), sellTrigger = tick(runHigh - params.pullback);
+      const within = (price: number) => tick(Math.min(high, Math.max(low, price)));
+      // 一根日线不能得知先后顺序；同日两侧均满足时沿用买入优先、每日最多一笔的保守约定。
+      // 锚点之后用户删除过成交的日期视为“当天没有成交”，上次成交价保持不变，网格从此前的真实成交继续（价格仍计入极值）。
+      let traded = false;
+      if (anchored && skipAfterAnchor.has(candle.date)) { /* 不成交 */ }
+      else if (buyArmed && high >= buyTrigger) traded = buy(candle.date, within(buyTrigger));
+      else if (sellArmed && low <= sellTrigger) traded = sell(candle.date, within(sellTrigger));
+      if (traded) runLow = runHigh = undefined;
     }
     series.push({ date: candle.date, current: candle.close, positionValue: shares * candle.close, capitalUsed, pnl: cash + shares * candle.close - openingAmount });
   }
+  // 锚点之后没有更晚的交易日：锚点价格就是当前的上次成交价。
+  if (!anchored) lastTrade = adjustments.anchor!.price;
   const current = candles.at(-1)?.close ?? opening.price, value = cash + shares * current;
-  const nextBuy = tick(lastTrade - row.step + row.rebound), nextSell = tick(lastTrade + row.step - row.pullback);
+  // 已跌破（突破）步长线、等待反弹（回落）时，预计下次买入（卖出）价是“最低点 + 反弹”（“最高点 − 回落”）；否则是步长线 ± 反弹/回落。
+  const lowSince = runLow !== undefined && runLow <= tick(lastTrade - row.step) ? runLow : undefined;
+  const highSince = runHigh !== undefined && runHigh >= tick(lastTrade + row.step) ? runHigh : undefined;
+  const nextBuy = lowSince !== undefined ? tick(lowSince + row.rebound) : tick(lastTrade - row.step + row.rebound);
+  const nextSell = highSince !== undefined ? tick(highSince - row.pullback) : tick(lastTrade + row.step - row.pullback);
   return {
     range: candles.length ? `${candles[0].date} ～ ${candles.at(-1)!.date}` : row.date,
-    current, lastTradeDate, lastTrade, nextBuy, nextSell, buyTrigger: nextBuy, sellTrigger: nextSell,
+    current, lastTradeDate, lastTrade, nextBuy, nextSell, buyTrigger: nextBuy, sellTrigger: nextSell, lowSince, highSince,
     pnl: value - openingAmount, value, realized, maxCapital, buys, sells, trades, series, position: shares,
   };
 }
@@ -379,7 +401,7 @@ export function replayBackup(backup: Backup, candles: Candle[]): GridResult {
 
 const backupAdjustments = (backup: Backup): Adjustments => ({
   price: backup.priceOverrides, amount: backup.amountOverrides, shares: backup.sharesOverrides, params: backup.paramHistory,
-  manual: backup.manualTrades, removed: backup.removedTrades,
+  manual: backup.manualTrades, removed: backup.removedTrades, resim: false, // 备份是冻结的快照，不随新口径变化
 });
 
 /**
@@ -406,18 +428,30 @@ export function openingOf(record: SavedRecord): { price: number; amount: number 
   return { price: opening?.price ?? record.row.initialPrice, amount: opening?.amount ?? record.row.initialAmount };
 }
 
-/** 网格模拟 + 手动增删叠加。 */
+/**
+ * 网格模拟 + 手动增删叠加。
+ * 只针对列表最上面（最新）的一行重新计算，中间行的增删不影响其他成交行（只扣减/追加它们自己的影响）。
+ * 叠加后如果最新一行不是模拟的最后一笔——手动录入了更新的成交，或删掉了最新的网格成交——
+ * 就以它的成交价为锚点，其后的交易日按网格重新模拟；它之后被删除过的成交日视为“当天没有成交”（当时它们都是最后一行）。
+ * 这样“预计下次买卖价”已被触及时，列表里也会有对应的成交，与备份续跑的口径一致。
+ */
 export function calculateGrid(row: GridParams, candles: Candle[], adjustments: Adjustments = {}): GridResult {
-  return applyLedger(row, simulateGrid(row, candles, adjustments), adjustments);
+  const base = simulateGrid(row, candles, adjustments), ledger = applyLedger(row, base, adjustments);
+  if (adjustments.resim === false || adjustments.anchor) return ledger;
+  const top = ledger.trades.at(-1)!;
+  if (!top.manual && top.date === base.lastTradeDate) return ledger;
+  const resumed = simulateGrid(row, candles, { ...adjustments, anchor: { after: top.date, price: top.price }, skip: adjustments.removed });
+  return applyLedger(row, resumed, adjustments, true);
 }
 
 /**
  * 叠加手动增删的成交：
  * - 只影响总盈亏、持仓、占用本金、最多使用本金与资金曲线；已有成交行（价格、份额、持仓、盈亏）保持模拟结果不变。
  * - 手动记录自身的成交后持仓、占用本金、当时盈亏，按“模拟结果在该日的状态 + 此前所有增删的累计影响”自动算出。
- * - 只有位于列表最上面（最新）的一条决定下一格买卖价的基准：新增了更新的记录，或删掉了最新的成交，才改变上次成交价。
+ * - 只有位于列表最上面（最新）的一条决定下一格买卖价的基准：新增了更新的记录，或删掉了最新的成交，才改变上次成交价；
+ *   calculateGrid 会以最新一行为锚点把其后的交易日按网格重新模拟，本函数只负责叠加。
  */
-function applyLedger(row: GridParams, base: GridResult, adjustments: Adjustments): GridResult {
+function applyLedger(row: GridParams, base: GridResult, adjustments: Adjustments, anchoredOnTop = false): GridResult {
   const manual = adjustments.manual ?? [], removed = new Set(adjustments.removed ?? []);
   const gridRemoved = base.trades.filter((trade, index) => index > 0 && !trade.manual && removed.has(trade.date));
   if (!manual.length && !gridRemoved.length) return base;
@@ -478,9 +512,13 @@ function applyLedger(row: GridParams, base: GridResult, adjustments: Adjustments
   const top = trades.at(-1)!;
   const topIsBaseLast = !top.manual && top.date === base.lastTradeDate;
   const lastTrade = topIsBaseLast ? base.lastTrade : top.price, lastTradeDate = topIsBaseLast ? base.lastTradeDate : top.date;
-  const nextBuy = tick(lastTrade - row.step + row.rebound), nextSell = tick(lastTrade + row.step - row.pullback);
+  // 模拟已经就是从最新一行出发（它是模拟最后一笔，或已以它为锚点重新模拟）时，沿用模拟里跟踪到的极值与预计买卖价；
+  // 否则（备份口径、最新一行是手动成交且没有重新模拟）按“上次成交价 ∓ 步长 ± 反弹/回落”估算。
+  const fromSimulation = topIsBaseLast || anchoredOnTop;
+  const nextBuy = fromSimulation ? base.nextBuy : tick(lastTrade - row.step + row.rebound), nextSell = fromSimulation ? base.nextSell : tick(lastTrade + row.step - row.pullback);
   return {
     ...base, trades, series, lastTrade, lastTradeDate, nextBuy, nextSell, buyTrigger: nextBuy, sellTrigger: nextSell,
+    lowSince: fromSimulation ? base.lowSince : undefined, highSince: fromSimulation ? base.highSince : undefined,
     pnl: base.pnl + delta, value: base.value + delta, position: (base.position ?? 0) + total.ds,
     maxCapital: Math.max(...series.map(point => point.capitalUsed)),
     buys: base.buys + total.dbuys, sells: base.sells + total.dsells,
@@ -492,15 +530,18 @@ function applyLedger(row: GridParams, base: GridResult, adjustments: Adjustments
 export type GridStatus = { tone: 'buy' | 'sell' | 'idle'; reached: boolean; label: string; detail: string; gap: number };
 
 /**
- * 当前状态：显示现价离固定下一笔买入/卖出价较近的一侧及差距。
+ * 当前状态：显示现价离下一笔买入/卖出价较近的一侧及差距。
+ * 已跌破（突破）步长线、等待反弹（回落）时显示“待反弹”（“待回落”），差距是现价到“最低点 + 反弹”（“最高点 − 回落”）的距离；
+ * 还没到步长线时显示“距买入价/卖出价”，差距是现价到“步长线 ± 反弹/回落”的距离。
  */
 export function gridStatus(record: SavedRecord): GridStatus | null {
-  const { result, row } = record, current = result.current;
+  const { result } = record, current = result.current;
   if (!(current > 0)) return null;
   const buyGap = (result.nextBuy - current) / current, sellGap = (result.nextSell - current) / current;
+  const buyArmed = result.lowSince !== undefined, sellArmed = result.highSince !== undefined;
   const candidates: GridStatus[] = [
-    { tone: 'buy', reached: current <= result.nextBuy, label: current <= result.nextBuy ? '已达买入价' : '距买入价', detail: formatPercent(buyGap), gap: buyGap },
-    { tone: 'sell', reached: current >= result.nextSell, label: current >= result.nextSell ? '已达卖出价' : '距卖出价', detail: formatPercent(sellGap), gap: sellGap },
+    { tone: 'buy', reached: buyArmed, label: buyArmed ? '待反弹' : '距买入价', detail: formatPercent(buyGap), gap: buyGap },
+    { tone: 'sell', reached: sellArmed, label: sellArmed ? '待回落' : '距卖出价', detail: formatPercent(sellGap), gap: sellGap },
   ];
   return candidates.sort((a, b) => Math.abs(a.gap) - Math.abs(b.gap))[0];
 }
