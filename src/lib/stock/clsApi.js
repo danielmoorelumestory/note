@@ -8,6 +8,10 @@ const signatureCache = new Map();
 const SIGNATURE_CACHE_MS = 5 * 60 * 1000;
 const LATEST_DAY_KEY = 'stock-latest-trading-day-v1';
 const LATEST_DAY_TTL = 30 * 60 * 1000;
+const TRADING_DAYS_KEY = 'stock-trading-days-v1';
+const TRADING_DAYS_TTL = 6 * 60 * 60 * 1000;
+/** 进程内缓存云端板块日，同一次打开站点重复进页面不再打 Worker */
+const cloudPlateMem = new Map(); // `${date}:${upLimit}` -> payload | null sentinel skip?
 
 async function fetchViaProxy(targetUrl) {
   let res;
@@ -57,12 +61,23 @@ export async function getClsSignature(targetRequestUrl) {
  * @returns {Promise<string[]>} YYYYMMDD，从近到远
  */
 export async function getTradingDays(startDate, endDate) {
+  const cacheKey = `${startDate}:${endDate}`;
+  try {
+    const cached = JSON.parse(sessionStorage.getItem(TRADING_DAYS_KEY) || 'null');
+    if (cached?.key === cacheKey && Date.now() - cached.time < TRADING_DAYS_TTL && Array.isArray(cached.days)) {
+      return cached.days;
+    }
+  } catch {}
   const url = `https://x-quote.cls.cn/v2/quote/a/stock/range_trading_days?start_date=${startDate}&end_date=${endDate}`;
   const json = await fetchViaProxy(url);
   if (json.code !== 200 || !Array.isArray(json.data)) {
     throw new Error(json.msg || '获取交易日失败');
   }
-  return json.data.map((d) => d.replace(/-/g, ''));
+  const days = json.data.map((d) => d.replace(/-/g, ''));
+  try {
+    sessionStorage.setItem(TRADING_DAYS_KEY, JSON.stringify({ key: cacheKey, days, time: Date.now() }));
+  } catch {}
+  return days;
 }
 
 /**
@@ -100,28 +115,134 @@ export async function fetchPlateUpDownAnalysis({ date, upLimit, signature }) {
 }
 
 /**
- * 按日期并发拉取板块数据（最多 concurrency 个同时在途），结果顺序与 dates 一致。
- * 只并发网络请求；写 IndexedDB 由调用方串行做，避免 stock_base 读改写互相覆盖。
+ * 读 Worker D1 里定时任务缓存的板块日数据。没有缓存返回 null。
+ * @param {string} date - YYYYMMDD
+ * @param {number} [upLimit]
+ * @returns {Promise<{ code: number, data: any, fetched_at?: number, source: 'd1' } | null>}
+ */
+export async function fetchCloudPlateDay(date, upLimit = 1) {
+  const memKey = `${date}:${upLimit}`;
+  if (cloudPlateMem.has(memKey)) return cloudPlateMem.get(memKey);
+
+  let res;
+  try {
+    res = await fetch(
+      `${SYNC_ENDPOINT}/stock/plate?date=${encodeURIComponent(date)}&up_limit=${upLimit}`,
+      { signal: AbortSignal.timeout(10000) },
+    );
+  } catch {
+    return null;
+  }
+  if (res.status === 404) {
+    cloudPlateMem.set(memKey, null);
+    return null;
+  }
+  if (!res.ok) return null;
+  try {
+    const json = await res.json();
+    if (json.code !== 200 || !json.data) {
+      cloudPlateMem.set(memKey, null);
+      return null;
+    }
+    cloudPlateMem.set(memKey, json);
+    return json;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 批量读云端板块日（一次请求），写入内存缓存。返回 Map<date, json>。
+ * @param {string[]} dates
+ */
+export async function fetchCloudPlateDays(dates, upLimit = 1) {
+  const unique = [...new Set(dates.filter(Boolean))];
+  const found = new Map();
+  const missing = [];
+  for (const date of unique) {
+    const memKey = `${date}:${upLimit}`;
+    if (cloudPlateMem.has(memKey)) {
+      const hit = cloudPlateMem.get(memKey);
+      if (hit) found.set(date, hit);
+      continue;
+    }
+    missing.push(date);
+  }
+  if (!missing.length) return found;
+
+  let res;
+  try {
+    res = await fetch(
+      `${SYNC_ENDPOINT}/stock/plates?dates=${missing.join(',')}&up_limit=${upLimit}`,
+      { signal: AbortSignal.timeout(20000) },
+    );
+  } catch {
+    return found;
+  }
+  if (!res.ok) return found;
+  try {
+    const json = await res.json();
+    const rows = json.data || {};
+    for (const date of missing) {
+      const row = rows[date];
+      const memKey = `${date}:${upLimit}`;
+      if (row?.data) {
+        const payload = { code: 200, data: row.data, fetched_at: row.fetched_at, source: 'd1' };
+        cloudPlateMem.set(memKey, payload);
+        found.set(date, payload);
+      } else {
+        cloudPlateMem.set(memKey, null);
+      }
+    }
+  } catch {}
+  return found;
+}
+
+/**
+ * 按日期拉取板块数据：优先云端 D1（批量），缺的再并发打 CLS。结果顺序与 dates 一致。
+ * 写 IndexedDB 由调用方串行做。
  * @param {string[]} dates - YYYYMMDD
- * @returns {Promise<Array<{ date: string, json?: any, error?: Error }>>}
+ * @returns {Promise<Array<{ date: string, json?: any, error?: Error, source?: string }>>}
  */
 export async function fetchPlateDays(dates, { upLimit = 1, concurrency = 4 } = {}) {
   if (!dates.length) return [];
-  const firstUrl = `https://x-quote.cls.cn/v2/quote/a/plate/up_down_analysis?up_limit=${upLimit}&date=${dates[0]}`;
-  const signature = await getClsSignature(firstUrl);
   const results = new Array(dates.length);
+  const cloudMap = await fetchCloudPlateDays(dates, upLimit);
+  const needLive = [];
+
+  dates.forEach((date, i) => {
+    const cloud = cloudMap.get(date);
+    if (cloud) results[i] = { date, json: cloud, source: 'd1' };
+    else needLive.push(i);
+  });
+
+  if (!needLive.length) return results;
+
+  let signature;
+  try {
+    const firstDate = dates[needLive[0]];
+    const firstUrl = `https://x-quote.cls.cn/v2/quote/a/plate/up_down_analysis?up_limit=${upLimit}&date=${firstDate}`;
+    signature = await getClsSignature(firstUrl);
+  } catch (error) {
+    for (const i of needLive) results[i] = { date: dates[i], error };
+    return results;
+  }
+
   let next = 0;
   const worker = async () => {
-    while (next < dates.length) {
-      const i = next++;
+    while (next < needLive.length) {
+      const slot = next++;
+      const i = needLive[slot];
       try {
-        results[i] = { date: dates[i], json: await fetchPlateUpDownAnalysis({ date: dates[i], upLimit, signature }) };
+        const json = await fetchPlateUpDownAnalysis({ date: dates[i], upLimit, signature });
+        results[i] = { date: dates[i], json, source: 'live' };
+        cloudPlateMem.set(`${dates[i]}:${upLimit}`, json);
       } catch (error) {
         results[i] = { date: dates[i], error };
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.min(concurrency, dates.length) }, worker));
+  await Promise.all(Array.from({ length: Math.min(concurrency, needLive.length) }, worker));
   return results;
 }
 

@@ -361,14 +361,190 @@ async function proxyCls(request: Request, url: URL, ctx: ExecutionContext): Prom
   return new Response(body, { status: upstream.status, headers: { 'content-type': contentType, ...cors, 'x-cls-cache': 'MISS' } });
 }
 
+const CLS_HEADERS = { 'User-Agent': 'Mozilla/5.0 (compatible; note-site/1)', Referer: 'https://www.cls.cn/' };
+
+async function clsFetchJson(url: string) {
+  const response = await fetch(url, { headers: CLS_HEADERS });
+  if (!response.ok) throw new Error(`CLS HTTP ${response.status}`);
+  return response.json() as Promise<Record<string, unknown>>;
+}
+
+async function clsSignature(targetUrl: string) {
+  const sdk = `https://api3.cls.cn/v2/js/sdk/cls?url=${encodeURIComponent(targetUrl)}`;
+  const body = await clsFetchJson(sdk) as { errno?: number; msg?: string; data?: { signature?: string } };
+  if (body.errno !== 0 || !body.data?.signature) throw new Error(body.msg || '获取 CLS 签名失败');
+  return body.data.signature;
+}
+
+async function clsTradingDays(startDate: string, endDate: string) {
+  const url = `https://x-quote.cls.cn/v2/quote/a/stock/range_trading_days?start_date=${startDate}&end_date=${endDate}`;
+  const body = await clsFetchJson(url) as { code?: number; msg?: string; data?: string[] };
+  if (body.code !== 200 || !Array.isArray(body.data)) throw new Error(body.msg || '获取交易日失败');
+  return body.data.map(day => day.replaceAll('-', ''));
+}
+
+async function ensureClsPlateTable(env: Env) {
+  await env.DB.prepare(
+    `CREATE TABLE IF NOT EXISTS cls_plate_day (
+      date TEXT NOT NULL,
+      up_limit INTEGER NOT NULL,
+      payload TEXT NOT NULL,
+      fetched_at INTEGER NOT NULL,
+      PRIMARY KEY (date, up_limit)
+    ) WITHOUT ROWID`,
+  ).run();
+}
+
+async function storeClsPlateDay(env: Env, date: string, upLimit: 0 | 1, signature: string) {
+  const target = `https://x-quote.cls.cn/v2/quote/a/plate/up_down_analysis?up_limit=${upLimit}&date=${date}`;
+  const body = await clsFetchJson(`${target}&sign=${signature}`) as { code?: number; msg?: string; data?: unknown };
+  if (body.code !== 200 || !body.data) throw new Error(body.msg || '板块数据失败');
+  await env.DB.prepare(
+    `INSERT INTO cls_plate_day (date, up_limit, payload, fetched_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(date, up_limit) DO UPDATE SET payload = excluded.payload, fetched_at = excluded.fetched_at`,
+  ).bind(date, upLimit, JSON.stringify(body.data), Date.now()).run();
+}
+
+/**
+ * 收盘后缓存财联社板块涨跌：最近 lookback 个交易日。
+ * 最近 2 日每次强制刷新；更早的只补缺。单次最多 maxDays 天 × 2 种 up_limit，控制子请求预算。
+ */
+async function syncClsPlates(env: Env, { lookback = 20, maxDays = 8 } = {}) {
+  await ensureClsPlateTable(env);
+  const end = beijingToday();
+  const start = addDays(end, -45);
+  const days = (await clsTradingDays(start, end)).slice(0, lookback);
+  if (!days.length) return { days: 0, todo: 0, stored: 0, errors: [] as string[] };
+
+  const { results: existing } = await env.DB.prepare(
+    'SELECT date, up_limit FROM cls_plate_day WHERE date >= ?',
+  ).bind(days.at(-1)!).all<{ date: string; up_limit: number }>();
+  const have = new Set(existing.map(row => `${row.date}:${row.up_limit}`));
+
+  const force = new Set(days.slice(0, 2));
+  const todo: string[] = [];
+  for (const date of days) {
+    const missing = !have.has(`${date}:0`) || !have.has(`${date}:1`);
+    if (force.has(date) || missing) todo.push(date);
+    if (todo.length >= maxDays) break;
+  }
+
+  let stored = 0;
+  const errors: string[] = [];
+  for (const date of todo) {
+    try {
+      const base = `https://x-quote.cls.cn/v2/quote/a/plate/up_down_analysis?up_limit=1&date=${date}`;
+      const signature = await clsSignature(base);
+      await storeClsPlateDay(env, date, 1, signature);
+      await storeClsPlateDay(env, date, 0, signature);
+      stored += 2;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      errors.push(`${date}: ${message}`);
+      console.error('CLS 板块同步失败', date, error);
+    }
+  }
+  return { days: days.length, todo: todo.length, stored, errors };
+}
+
+async function readClsPlateDay(env: Env, request: Request, url: URL) {
+  const origin = request.headers.get('origin');
+  const cors = { 'access-control-allow-origin': origin ?? '*', vary: 'Origin' };
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { headers: { ...cors, 'access-control-allow-methods': 'GET, OPTIONS' } });
+  }
+  if (!clsOriginAllowed(origin)) return json({ error: '来源不允许。' }, 403);
+  const date = (url.searchParams.get('date') ?? '').replaceAll('-', '');
+  const upLimit = Number(url.searchParams.get('up_limit') ?? '1');
+  if (!/^\d{8}$/.test(date) || (upLimit !== 0 && upLimit !== 1)) return json({ error: '参数无效。' }, 400);
+  await ensureClsPlateTable(env);
+  const row = await env.DB.prepare('SELECT payload, fetched_at FROM cls_plate_day WHERE date = ? AND up_limit = ?')
+    .bind(date, upLimit).first<{ payload: string; fetched_at: number }>();
+  if (!row) return json({ error: '无缓存', code: 404 }, 404);
+  return new Response(JSON.stringify({ code: 200, data: JSON.parse(row.payload), fetched_at: row.fetched_at, source: 'd1' }), {
+    headers: { 'content-type': 'application/json; charset=utf-8', ...cors },
+  });
+}
+
+async function listClsPlateDays(env: Env, request: Request) {
+  const origin = request.headers.get('origin');
+  const cors = { 'access-control-allow-origin': origin ?? '*', vary: 'Origin' };
+  if (!clsOriginAllowed(origin)) return json({ error: '来源不允许。' }, 403);
+  await ensureClsPlateTable(env);
+  const { results } = await env.DB.prepare(
+    'SELECT date, up_limit, fetched_at FROM cls_plate_day ORDER BY date DESC, up_limit DESC LIMIT 120',
+  ).all<{ date: string; up_limit: number; fetched_at: number }>();
+  return new Response(JSON.stringify({ code: 200, data: results }), {
+    headers: { 'content-type': 'application/json; charset=utf-8', ...cors },
+  });
+}
+
+/** 批量读取：?dates=20261009,20261008&up_limit=1 → { data: { [date]: { data, fetched_at } } } */
+async function readClsPlateDays(env: Env, request: Request, url: URL) {
+  const origin = request.headers.get('origin');
+  const cors = { 'access-control-allow-origin': origin ?? '*', vary: 'Origin' };
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { headers: { ...cors, 'access-control-allow-methods': 'GET, OPTIONS' } });
+  }
+  if (!clsOriginAllowed(origin)) return json({ error: '来源不允许。' }, 403);
+  const upLimit = Number(url.searchParams.get('up_limit') ?? '1');
+  const dates = (url.searchParams.get('dates') ?? '')
+    .split(',')
+    .map(d => d.replaceAll('-', '').trim())
+    .filter(d => /^\d{8}$/.test(d))
+    .slice(0, 40);
+  if (!dates.length || (upLimit !== 0 && upLimit !== 1)) return json({ error: '参数无效。' }, 400);
+  await ensureClsPlateTable(env);
+  const placeholders = dates.map(() => '?').join(',');
+  const { results } = await env.DB.prepare(
+    `SELECT date, payload, fetched_at FROM cls_plate_day WHERE up_limit = ? AND date IN (${placeholders})`,
+  ).bind(upLimit, ...dates).all<{ date: string; payload: string; fetched_at: number }>();
+  const data: Record<string, { data: unknown; fetched_at: number }> = {};
+  for (const row of results) data[row.date] = { data: JSON.parse(row.payload), fetched_at: row.fetched_at };
+  return new Response(JSON.stringify({ code: 200, data }), {
+    headers: { 'content-type': 'application/json; charset=utf-8', ...cors },
+  });
+}
+
 export default {
-  // 定时任务（见 wrangler.jsonc 的 triggers.crons）：每个交易日 15:10、16:00 与次日 09:00 抓取所有已保存标的的 1 分钟线。
+  // 定时任务（见 wrangler.jsonc 的 triggers.crons）：每个交易日 15:10、16:00 与次日 09:00。
+  // 先缓存 CLS 板块涨跌（股市 lab），再抓网格标的分钟线 / 日K。
   async scheduled(_controller, env) {
+    try {
+      const plate = await syncClsPlates(env);
+      console.log('CLS 板块同步', plate);
+    } catch (error) {
+      console.error('CLS 板块同步异常', error);
+    }
     await runSync(env, 'cron', await trackedCodes(env));
   },
   async fetch(request, env, ctx): Promise<Response> {
     const url = new URL(request.url);
     if (url.pathname === '/cls') return proxyCls(request, url, ctx);
+    if (url.pathname === '/stock/plate') return readClsPlateDay(env, request, url);
+    if (url.pathname === '/stock/plates') return readClsPlateDays(env, request, url);
+    if (url.pathname === '/stock/plate/dates' && request.method === 'GET') return listClsPlateDays(env, request);
+    if (url.pathname === '/stock/sync' && (request.method === 'POST' || request.method === 'OPTIONS')) {
+      const origin = request.headers.get('origin');
+      const cors = { 'access-control-allow-origin': origin ?? '*', 'access-control-allow-methods': 'POST, OPTIONS', 'access-control-allow-headers': 'authorization, content-type', vary: 'Origin' };
+      if (request.method === 'OPTIONS') return new Response(null, { headers: cors });
+      if (!clsOriginAllowed(origin)) return json({ error: '来源不允许。' }, 403);
+      // 浏览器可触发补拉；10 分钟冷却，避免被刷爆 CLS 配额。带网格同步密钥时可跳过冷却并加大回填。
+      const owner = await ownerHash(request);
+      await ensureClsPlateTable(env);
+      if (!owner) {
+        const latest = await env.DB.prepare('SELECT MAX(fetched_at) AS t FROM cls_plate_day').first<{ t: number | null }>();
+        if (latest?.t && Date.now() - latest.t < 10 * 60_000) {
+          return new Response(JSON.stringify({ ok: true, skipped: 'cooldown', fetched_at: latest.t }), {
+            headers: { 'content-type': 'application/json; charset=utf-8', ...cors },
+          });
+        }
+      }
+      const lookback = Math.min(40, Math.max(1, Number(url.searchParams.get('days') ?? (owner ? '20' : '12')) || 12));
+      const maxDays = Math.min(owner ? 20 : 8, Math.max(1, Number(url.searchParams.get('max') ?? String(Math.min(8, lookback))) || 8));
+      const result = await syncClsPlates(env, { lookback, maxDays });
+      return new Response(JSON.stringify(result), { headers: { 'content-type': 'application/json; charset=utf-8', ...cors } });
+    }
     if (request.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, PUT, POST, OPTIONS', 'access-control-allow-headers': 'authorization, content-type' } });
     const owner = await ownerHash(request);
     if (!owner) return json({ error: '请提供至少 16 位同步密钥。' }, 401);

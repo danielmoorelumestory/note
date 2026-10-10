@@ -1,7 +1,7 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { initDB, getPlateData, extractAndSaveAllData } from '../../lib/stock/db.js'
-import { getClsSignature, fetchPlateUpDownAnalysis, getTodayYYYYMMDD, getBeijingDate, getLatestTradingDay } from '../../lib/stock/clsApi.js'
+import { getClsSignature, fetchPlateUpDownAnalysis, fetchCloudPlateDay, getTodayYYYYMMDD, getBeijingDate, getLatestTradingDay } from '../../lib/stock/clsApi.js'
 import StockLimitDetail from './StockLimitDetail.vue'
 
 const props = defineProps({
@@ -44,13 +44,18 @@ const fetchStocks = async () => {
     await initDB()
     if (isStale()) return
 
+    const applyPayload = (payload, fromCache) => {
+      stockData.value = payload.plate_stock || []
+      ladderData.value = payload.continuous_limit_up || []
+      isFromCache.value = fromCache
+    }
+
+    // 历史日：localStorage → IndexedDB → 云端 D1 → 实时 CLS（本地命中则零网络）
+    // 当日：云端（收盘后 cron）→ 实时
     if (!isToday) {
       const cached = localStorage.getItem(cacheKey)
       if (cached) {
-        const parsed = JSON.parse(cached)
-        stockData.value = parsed.plate_stock || []
-        ladderData.value = parsed.continuous_limit_up || []
-        isFromCache.value = true
+        applyPayload(JSON.parse(cached), true)
         return
       }
       const plateResult = await getPlateData(apiDate)
@@ -63,19 +68,32 @@ const fetchStocks = async () => {
       }
     }
 
+    const cloud = await fetchCloudPlateDay(apiDate, upLimit)
+    if (isStale()) return
+    if (cloud?.data) {
+      applyPayload(cloud.data, true)
+      localStorage.setItem(cacheKey, JSON.stringify({
+        plate_stock: cloud.data.plate_stock,
+        continuous_limit_up: cloud.data.continuous_limit_up,
+        timestamp: cloud.fetched_at || Date.now(),
+        source: 'd1',
+      }))
+      try { await extractAndSaveAllData(apiDate, cloud) } catch {}
+      return
+    }
+
     const targetUrl = `https://x-quote.cls.cn/v2/quote/a/plate/up_down_analysis?up_limit=${upLimit}&date=${apiDate}`
     const signature = await getClsSignature(targetUrl)
     const json = await fetchPlateUpDownAnalysis({ date: apiDate, upLimit, signature })
     if (isStale()) return
 
-    stockData.value = json.data.plate_stock || []
-    ladderData.value = json.data.continuous_limit_up || []
-    isFromCache.value = false
+    applyPayload(json.data, false)
 
     localStorage.setItem(cacheKey, JSON.stringify({
       plate_stock: json.data.plate_stock,
       continuous_limit_up: json.data.continuous_limit_up,
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      source: 'live',
     }))
 
     try {

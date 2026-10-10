@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import { initDB, getPlateData, extractAndSaveAllData, updatePlateContinuityRate } from '../../lib/stock/db.js'
+import { initDB, getPlateData, getPlateDataBatch, extractAndSaveAllData, updatePlateContinuityRate } from '../../lib/stock/db.js'
 import { getTradingDays, fetchPlateDays, getTodayYYYYMMDD, getBeijingDate, recentWeekdays } from '../../lib/stock/clsApi.js'
 import PlateStockList from './PlateStockList.vue'
 
@@ -405,28 +405,15 @@ const fetchForSevenValidDates = async () => {
     dateList = recentWeekdays(7)
   }
 
+  // 历史日优先 IndexedDB（无网络）；缺的再批量走云端 D1 / 实时 CLS
   const needFetchDates = []
+  const localRows = await getPlateDataBatch(dateList.filter((d) => d !== todayStr))
+  const localByDate = new Map(localRows.map((r) => [r.date, r]))
 
   for (const apiDate of dateList) {
-    const isToday = apiDate === todayStr
-    let plateData = null
-    let plateStats = {}
-
-    if (!isToday) {
-      try {
-        const plateDataResult = await getPlateData(apiDate)
-        if (plateDataResult?.plateData?.length > 0) {
-          console.log('SectorRotation: 从本地数据库加载数据', apiDate)
-          plateData = plateDataResult.plateData
-          plateStats = plateDataResult.stats || {}
-        }
-      } catch (e) {
-        console.warn('从本地数据库查询失败', apiDate, e)
-      }
-    }
-
-    if (plateData?.length > 0) {
-      pushSectorDay(apiDate, plateData, plateStats)
+    const local = apiDate === todayStr ? null : localByDate.get(apiDate)
+    if (local?.plateData?.length > 0) {
+      pushSectorDay(apiDate, local.plateData, local.stats || {})
     } else {
       needFetchDates.push(apiDate)
     }

@@ -59,3 +59,13 @@ CREATE TABLE IF NOT EXISTS daily_meta (
   code TEXT PRIMARY KEY,
   backfilled_from TEXT NOT NULL
 );
+
+-- 财联社板块涨跌分析（股市 lab）：按交易日 + 是否只看涨停缓存完整 data 字段 JSON。
+-- 定时任务收盘后写入；前端优先读这里，没有再走实时 CLS。
+CREATE TABLE IF NOT EXISTS cls_plate_day (
+  date TEXT NOT NULL,
+  up_limit INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  fetched_at INTEGER NOT NULL,
+  PRIMARY KEY (date, up_limit)
+) WITHOUT ROWID;
