@@ -25,9 +25,9 @@ const savedUrl = href('lab/grid-trading/saved');
   <section class="backup-panel" aria-label="备份对比">
     <div class="backup-head">
       <div><h2>备份对比</h2><p id="backup-desc">备份当前数据作为基准点。之后你手动微调买卖点（改成交、增删记录、改参数），这里会对比“从备份点起完全按网格买卖”与“你现在的实际数据”的收益差别。</p></div>
-      <div class="backup-actions"><select id="backup-select" hidden aria-label="选择备份"></select><a id="backup-view" class="tool-link" hidden>查看备份详情 →</a><button id="backup-delete" class="tool-link" type="button" hidden>删除此备份</button><button id="backup-now" class="tool-button" type="button" disabled>备份当前数据</button></div>
+      <div class="backup-actions"><select id="backup-select" hidden aria-label="选择备份"></select><a id="backup-view" class="tool-link" hidden>查看备份详情</a><button id="backup-delete" class="tool-link" type="button" hidden>删除此备份</button></div>
     </div>
-    <p id="backup-empty" class="backup-empty">还没有备份。点击右上角“备份当前数据”，以当前状态为起点开始对比。</p>
+    <p id="backup-empty" class="backup-empty">还没有备份。点击下方“历史成交”里的“备份当前数据”，以当前状态为起点开始对比。</p>
     <div id="backup-compare" class="backup-compare"></div>
     <div id="compare-chart-block" class="compare-chart-block" hidden>
       <div class="chart-head">
@@ -40,7 +40,23 @@ const savedUrl = href('lab/grid-trading/saved');
   </section>
   <section class="history"><h2>历史成交</h2><p id="history-hint">成交价格、成交金额、成交份额可直接修改为真实成交值（如按 100 份整数倍成交），修改份额时金额按“份额 × 成交价”计算；修改后该笔及之后的持仓、盈亏、网格价位会重新计算，并自动同步到云端。持仓市值按该笔成交价估值；“当时占用本金”仅统计成交金额，不含手续费，其最高值与回测摘要中的“最多使用本金”一致。最新成交在最上方。</p>
     <p id="history-hint2">可添加或删除成交记录（建仓不可删除）：添加时填写日期、方向、成交价格和成交份额，其余数据自动计算并按日期排入列表。增删只影响总盈亏、持仓和占用本金，不改动其他成交行；只有最上面（最新）的一条变化时（新增了更新的成交，或删掉了最新的成交），才会改变下一格买卖价的基准，并且该条之后的交易日会按网格从它的成交价重新判断，之后被删除过的成交日视为当天没有成交。</p>
-    <div class="trade-tools"><button id="add-trade-toggle" class="tool-button" type="button">＋ 添加记录</button><button id="restore-removed" class="tool-link" type="button" hidden></button></div>
+    <div class="trade-tools"><button id="add-trade-toggle" class="tool-button" type="button">＋ 添加记录</button><button id="backup-now" class="tool-button" type="button" disabled>备份当前数据</button><button id="restore-removed" class="tool-link" type="button" hidden></button></div>
+    <section id="removed-panel" class="removed-panel" hidden aria-label="已删除的网格成交">
+      <div class="removed-head"><strong id="removed-title">已删除的网格成交</strong><button id="removed-close" class="tool-link" type="button">收起</button></div>
+      <div class="scroll"><table class="removed-table">
+        <thead><tr><th><input id="removed-all" type="checkbox" aria-label="全选"></th><th>日期</th><th>方向</th><th>价格</th><th>份额</th><th>金额</th><th>状态</th></tr></thead>
+        <tbody id="removed-rows"></tbody>
+      </table></div>
+      <div class="removed-actions">
+        <button id="removed-restore-selected" class="tool-primary" type="button" disabled>恢复选中</button>
+        <button id="removed-clear-selected" class="tool-button danger" type="button" disabled>清除选中</button>
+        <button id="removed-restore-all" class="tool-button" type="button">恢复全部</button>
+        <button id="removed-clear-stale" class="tool-button danger" type="button" hidden>清除失效记录</button>
+        <button id="removed-toggle-hidden" class="tool-link" type="button" hidden></button>
+        <span id="removed-msg" class="removed-msg" role="status"></span>
+      </div>
+      <p class="removed-hint">“已失效”指在当前规则和行情下，这一天已经没有对应的网格成交（例如规则变化后日期对不上）；失效记录不影响任何成交行，可以用“清除选中”或“清除失效记录”清掉。对“可恢复”的条目，“清除选中”只是把它从这个待处理列表里移走，成交仍然保持删除（可以随时用“显示已确认删除”找回）。</p>
+    </section>
     <form id="trade-form" class="trade-form" hidden novalidate>
       <label>日期 <input id="tf-date" type="date" required></label>
       <label>方向 <select id="tf-side"><option value="买入">买入</option><option value="卖出">卖出</option></select></label>
@@ -58,7 +74,7 @@ const savedUrl = href('lab/grid-trading/saved');
   import {
     calculateGrid, adjustmentsOf, getCandles, fetchQuotes, mergeQuote, refreshRecord, readRecords, saveRecord, pushRecord,
     renderEquityChart, renderCompareChart, holdingValue, openingOf, createBackup, replayBackup, refreshBackupSnapshot, upgradeBackup, formatMoney, formatAmount, formatPercent, tick,
-    blockCopy, fetchMinuteBars, fetchMinuteStatus, readSyncKey, marketToday, type MinuteBar,
+    blockCopy, fetchMinuteBars, fetchLatestMinuteBars, syncMinuteBars, fetchMinuteStatus, readSyncKey, marketToday, type MinuteBar,
     type SavedRecord, type Trade, type Adjustments, type GridResult, type Backup, type CompareMetric, type EquityPoint,
   } from '../../../lib/grid-trading';
   import { renderMinuteChart, minuteSummaryHtml } from '../../../lib/minute-chart';
@@ -96,6 +112,13 @@ const savedUrl = href('lab/grid-trading/saved');
   const minuteStatus = document.querySelector('#minute-status') as HTMLElement;
   let minuteByDate = new Map<string, MinuteBar[]>(), minuteCode = '', minuteRequest = 0;
   const minuteDaysAgo = (days: number) => { const day = new Date(`${marketToday()}T00:00:00Z`); day.setUTCDate(day.getUTCDate() - days); return day.toISOString().slice(0, 10).replaceAll('-', ''); };
+  // 最近应有行情的工作日：周六/周日回看周五；节假日再由行情源实际返回的最新日期兜底。
+  const latestWeekday = () => {
+    const day = new Date(`${marketToday()}T00:00:00Z`), weekday = day.getUTCDay();
+    if (weekday === 6) day.setUTCDate(day.getUTCDate() - 1);
+    if (weekday === 0) day.setUTCDate(day.getUTCDate() - 2);
+    return day.toISOString().slice(0, 10).replaceAll('-', '');
+  };
   // 缺口提示：有缺口、或云端长时间没有成功抓取时显示一行；读取状态失败时静默，不影响图表。
   async function loadMinuteAlert(code: string, id: number) {
     const alertEl = document.querySelector('#minute-alert') as HTMLElement;
@@ -119,10 +142,37 @@ const savedUrl = href('lab/grid-trading/saved');
     if (!force && code === minuteCode) return;
     minuteCode = code;
     const id = ++minuteRequest;
-    if (readSyncKey().length < 16) { minuteStatus.textContent = '请先在“已保存标的”页填写同步密钥，才能读取云端分钟线。'; renderMinuteChart(minuteSvg, []); return; }
     minuteStatus.textContent = '正在读取分钟线…';
     try {
-      const bars = await fetchMinuteBars(code, minuteDaysAgo(30), minuteDaysAgo(-1), minuteAdjust.checked ? 'qfq' : 'none');
+      const from = minuteDaysAgo(30), to = minuteDaysAgo(-1), adjust = minuteAdjust.checked ? 'qfq' : 'none', expectedDate = latestWeekday();
+      const hasSyncKey = readSyncKey().length >= 16;
+      let bars: MinuteBar[] = [], usedLiveFallback = false;
+      // 云端不可用或密钥缺失不应阻断直连行情兜底。
+      if (hasSyncKey) {
+        try { bars = await fetchMinuteBars(code, from, to, adjust); } catch { /* 继续尝试直连行情 */ }
+      }
+      // 定时任务主要在收盘后写入。当日数据尚未入库时补抓一次后再读取；已包含当天时完全不发补抓请求。
+      if (hasSyncKey && !bars.some(bar => bar.ts.startsWith(expectedDate))) {
+        minuteStatus.textContent = '最新交易日分钟线尚未同步，正在补取…';
+        try { await syncMinuteBars(code); bars = await fetchMinuteBars(code, from, to, adjust); } catch { /* 保留已读取的历史分钟线 */ }
+      }
+      // 云端补抓仍未写入时直连行情源。云端完全为空时保留直连返回的最近数日，避免日期选择也为空。
+      if (!bars.some(bar => bar.ts.startsWith(expectedDate))) {
+        try {
+          const latestBars = await fetchLatestMinuteBars(code);
+          const cloudLatestDate = bars.reduce((latest, bar) => bar.ts.slice(0, 8) > latest ? bar.ts.slice(0, 8) : latest, '');
+          // 不假设节假日一定有行情：以行情源实际最新日期为准，只补云端最后日期之后的数据。
+          const latest = bars.length ? latestBars.filter(bar => bar.ts.slice(0, 8) > cloudLatestDate) : latestBars;
+          // 直连行情为未复权价。若已有云端前复权分钟线，以同一时刻的价差换算当天数据，保持图表口径一致。
+          const cloudByTs = new Map(bars.map(bar => [bar.ts, bar]));
+          const reference = latestBars.find(bar => cloudByTs.has(bar.ts));
+          const offset = adjust === 'qfq' && reference ? reference.close - cloudByTs.get(reference.ts)!.close : 0;
+          const merged = new Map(bars.map(bar => [bar.ts, bar]));
+          for (const bar of latest) merged.set(bar.ts, { ...bar, open: bar.open - offset, close: bar.close - offset, high: bar.high - offset, low: bar.low - offset });
+          bars = [...merged.values()].sort((a, b) => a.ts.localeCompare(b.ts));
+          usedLiveFallback = latest.length > 0;
+        } catch { /* 直连行情不可用时仍显示已有历史分钟线 */ }
+      }
       if (id !== minuteRequest) return;
       minuteByDate = new Map();
       for (const bar of bars) { const date = bar.ts.slice(0, 8); minuteByDate.set(date, [...(minuteByDate.get(date) ?? []), bar]); }
@@ -130,7 +180,9 @@ const savedUrl = href('lab/grid-trading/saved');
       minuteDate.innerHTML = dates.map(date => `<option value="${date}">${date.slice(0, 4)}-${date.slice(4, 6)}-${date.slice(6, 8)}</option>`).join('');
       if (dates.includes(previous)) minuteDate.value = previous;
       void loadMinuteAlert(code, id);
-      minuteStatus.textContent = dates.length ? `已同步 ${dates.length} 个交易日（最近 30 天内）` : '最近 30 天内暂无该标的的分钟线；云端每个交易日收盘后（15:10）自动抓取。';
+      minuteStatus.textContent = dates.length
+        ? `${usedLiveFallback ? '已补取最新行情，' : ''}共 ${dates.length} 个交易日${hasSyncKey ? '（最近 30 天内）' : '（直连最新数据）'}`
+        : '暂无该标的的分钟线数据。';
       renderMinuteDay();
     } catch (error) {
       if (id !== minuteRequest) return;
@@ -194,7 +246,9 @@ const savedUrl = href('lab/grid-trading/saved');
     });
     document.querySelector('#trades')!.innerHTML = rows.reverse().join('');
     const restore = document.querySelector('#restore-removed') as HTMLButtonElement, removedCount = item.removedTrades?.length ?? 0;
-    restore.hidden = !removedCount; restore.textContent = `恢复已删除的 ${removedCount} 条网格成交`;
+    const confirmedDates = new Set(item.removedConfirmed ?? []), pendingCount = (item.removedTrades ?? []).filter(date => !confirmedDates.has(date)).length;
+    restore.hidden = !removedCount; restore.textContent = pendingCount ? `恢复已删除的 ${pendingCount} 条网格成交` : `查看已确认删除的 ${removedCount} 条`;
+    if (!removedCount) (document.querySelector('#removed-panel') as HTMLElement).hidden = true;
     renderEquityChart(document.querySelector('#equity-chart') as SVGSVGElement, result.series ?? [], result.nextBuy, result.nextSell, result.trades, viewBackup ? { date: viewBackup.date, label: '备份点' } : undefined, { down: row.step - row.rebound, up: row.step - row.pullback });
     if (!viewBackup) void renderBackups(item);
   }
@@ -428,10 +482,99 @@ const savedUrl = href('lab/grid-trading/saved');
       save.disabled = false;
     });
 
-    document.querySelector('#restore-removed')!.addEventListener('click', () => {
-      const count = record?.removedTrades?.length ?? 0;
-      if (!count || !confirm(`确认恢复已删除的 ${count} 条网格成交？\n恢复后这些成交会重新计入总盈亏、持仓和占用本金，下一格买卖价也可能随之变化。`)) return;
-      commit(item => ({ ...item, removedTrades: [] })).catch(() => showNote('行情获取失败，请稍后重试'));
+    // 已删除的网格成交：点按钮展开列表，可勾选恢复、清除，也可一键恢复全部或清除失效记录。每个操作都需要二次确认。
+    // 勾选可以同时包含“可恢复”和“已失效”的条目：恢复选中会把可恢复的成交恢复、把失效的记录丢掉；
+    // 清除选中会把失效的记录丢掉，可恢复的只是移出待处理列表（成交保持删除，记入“已确认删除”）。
+    const panel = document.querySelector('#removed-panel') as HTMLElement, restoreButton = document.querySelector('#restore-removed') as HTMLButtonElement;
+    const rowsEl = document.querySelector('#removed-rows') as HTMLElement, msgEl = document.querySelector('#removed-msg') as HTMLElement;
+    const selectedButton = document.querySelector('#removed-restore-selected') as HTMLButtonElement, allBox = document.querySelector('#removed-all') as HTMLInputElement;
+    const clearButton = document.querySelector('#removed-clear-stale') as HTMLButtonElement, restoreAllButton = document.querySelector('#removed-restore-all') as HTMLButtonElement;
+    const clearSelectedButton = document.querySelector('#removed-clear-selected') as HTMLButtonElement, toggleHidden = document.querySelector('#removed-toggle-hidden') as HTMLButtonElement;
+    type RemovedEntry = { date: string; trade?: Trade; confirmed: boolean };
+    let allEntries: RemovedEntry[] = [], removedItems: RemovedEntry[] = [], showHidden = false, judged = true;
+    const shareText = (trade: Trade) => `${Math.round(trade.quantity ?? trade.shares).toLocaleString('zh-CN')}`;
+    const selection = () => {
+      const picked = new Set([...rowsEl.querySelectorAll<HTMLInputElement>('input[type=checkbox]:checked')].map(box => box.dataset.date!));
+      const entries = removedItems.filter(entry => picked.has(entry.date));
+      // 清除选中会处理：失效的（直接丢掉）和可恢复但还没确认的（移出待处理列表）。
+      return { dates: entries.map(entry => entry.date), stale: entries.filter(entry => !entry.trade).map(entry => entry.date), hide: entries.filter(entry => entry.trade && !entry.confirmed).map(entry => entry.date) };
+    };
+    const syncSelection = () => {
+      const boxes = [...rowsEl.querySelectorAll<HTMLInputElement>('input[type=checkbox]')], chosen = selection(), clearCount = chosen.stale.length + chosen.hide.length;
+      selectedButton.disabled = !chosen.dates.length; selectedButton.textContent = chosen.dates.length ? `恢复选中（${chosen.dates.length}）` : '恢复选中';
+      clearSelectedButton.disabled = !clearCount || !judged; clearSelectedButton.textContent = clearCount ? `清除选中（${clearCount}）` : '清除选中';
+      allBox.checked = !!boxes.length && chosen.dates.length === boxes.length; allBox.indeterminate = chosen.dates.length > 0 && chosen.dates.length < boxes.length; allBox.disabled = !boxes.length;
+    };
+    // 列表内容：假设没有任何删除，模拟出的网格成交里仍有这一天成交的，就是“可恢复”；否则是“已失效”。
+    async function refreshRemovedPanel() {
+      const item = record, dates = item?.removedTrades ?? [];
+      if (!item || !dates.length) { panel.hidden = true; restoreButton.setAttribute('aria-expanded', 'false'); return; }
+      msgEl.textContent = '正在读取…';
+      const confirmed = new Set(item.removedConfirmed ?? []);
+      // 逐条判断：只恢复这一条、其余删除保持不变，这一天会不会出现网格成交。有成交就是“可恢复”，没有就是“已失效”。
+      // （不能整体假设没有任何删除：被删除的成交之间可能互相依赖，比如 10/8 不买之后 10/9 才会触发。）
+      const sorted = [...dates].sort((a, b) => b.localeCompare(a)), tradeOf = new Map<string, Trade>();
+      judged = true;
+      try {
+        const candles = await loadCandles(item);
+        for (const date of sorted) {
+          const only = calculateGrid(item.row, candles, { ...adjustmentsOf(item), removed: dates.filter(other => other !== date) });
+          const found = only.trades.find(trade => !trade.manual && trade.side !== '建仓' && trade.date === date);
+          if (found) tradeOf.set(date, found);
+        }
+      } catch { judged = false; /* 行情不可用：无法判断是否失效，此时不允许清除 */ }
+      allEntries = sorted.map(date => ({ date, trade: tradeOf.get(date), confirmed: confirmed.has(date) }));
+      const hiddenCount = allEntries.filter(entry => entry.confirmed).length;
+      removedItems = showHidden ? allEntries : allEntries.filter(entry => !entry.confirmed);
+      const pending = allEntries.length - hiddenCount, stale = judged ? allEntries.filter(entry => !entry.trade).length : 0;
+      (document.querySelector('#removed-title') as HTMLElement).textContent = `已删除的网格成交（待处理 ${pending} 条${stale ? `，其中失效 ${stale} 条` : ''}${hiddenCount ? `；另有 ${hiddenCount} 条已确认删除` : ''}）`;
+      rowsEl.innerHTML = removedItems.map(({ date, trade, confirmed: done }) => trade
+        ? `<tr><td><input type="checkbox" data-date="${date}" aria-label="选择 ${date}"></td><td>${date}</td><td><b class="${trade.side === '卖出' ? 'sell' : 'buy'}">${trade.side}</b></td><td>¥${trade.price.toFixed(3)}</td><td>${shareText(trade)}</td><td>¥${formatAmount(trade.amount)}</td><td class="${done ? 'muted' : 'ok'}">${done ? '已确认删除' : '可恢复'}</td></tr>`
+        : `<tr class="stale"><td><input type="checkbox" data-date="${date}" aria-label="选择 ${date}"></td><td>${date}</td><td>—</td><td>—</td><td>—</td><td>—</td><td class="muted">${judged ? '已失效' : '无法判断'}</td></tr>`).join('')
+        || '<tr><td colspan="7" class="muted">没有待处理的删除记录</td></tr>';
+      msgEl.textContent = judged ? '' : '行情暂时不可用，无法判断哪些记录已失效，清除功能暂不可用；仍可恢复。';
+      clearButton.hidden = !stale; toggleHidden.hidden = !hiddenCount; toggleHidden.textContent = `${showHidden ? '隐藏' : '显示'}已确认删除的 ${hiddenCount} 条`;
+      restoreAllButton.disabled = !removedItems.length; panel.hidden = false; restoreButton.setAttribute('aria-expanded', 'true');
+      syncSelection();
+    }
+    // 执行一次改动：removed 是新的删除列表，confirmed 是新的“已确认删除”列表（自动剔除不在删除列表里的日期）。
+    async function changeRemoved(change: (removed: string[], confirmed: string[]) => { removed: string[]; confirmed: string[] }) {
+      for (const button of [selectedButton, clearSelectedButton, restoreAllButton, clearButton]) button.disabled = true;
+      try {
+        await commit(item => {
+          const next = change(item.removedTrades ?? [], item.removedConfirmed ?? []), kept = new Set(next.removed);
+          return { ...item, removedTrades: next.removed, removedConfirmed: next.confirmed.filter(date => kept.has(date)) };
+        });
+        await refreshRemovedPanel();
+      } catch { msgEl.textContent = '行情获取失败，请稍后重试'; }
+      clearButton.disabled = false; syncSelection(); restoreAllButton.disabled = !removedItems.length;
+    }
+    restoreButton.addEventListener('click', () => { if (panel.hidden) void refreshRemovedPanel(); else { panel.hidden = true; restoreButton.setAttribute('aria-expanded', 'false'); } });
+    document.querySelector('#removed-close')!.addEventListener('click', () => { panel.hidden = true; restoreButton.setAttribute('aria-expanded', 'false'); });
+    toggleHidden.addEventListener('click', () => { showHidden = !showHidden; void refreshRemovedPanel(); });
+    rowsEl.addEventListener('change', syncSelection);
+    allBox.addEventListener('change', () => { rowsEl.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach(box => { box.checked = allBox.checked; }); syncSelection(); });
+    selectedButton.addEventListener('click', () => {
+      const chosen = selection(), picked = new Set(chosen.dates), stale = chosen.dates.filter(date => removedItems.find(entry => entry.date === date && !entry.trade)).length;
+      if (!picked.size || !confirm(`确认恢复选中的 ${picked.size} 条？\n${picked.size - stale} 条网格成交会重新计入总盈亏、持仓和占用本金，下一格买卖价也可能随之变化。${stale ? `\n其中 ${stale} 条已失效，只会被清除，不会产生成交。` : ''}`)) return;
+      void changeRemoved((removed, confirmed) => ({ removed: removed.filter(date => !picked.has(date)), confirmed: confirmed.filter(date => !picked.has(date)) }));
+    });
+    clearSelectedButton.addEventListener('click', () => {
+      const chosen = selection(), staleSet = new Set(chosen.stale), hideSet = new Set(chosen.hide);
+      if (!staleSet.size && !hideSet.size) return;
+      const parts = [staleSet.size ? `${staleSet.size} 条已失效的记录会被清除` : '', hideSet.size ? `${hideSet.size} 条可恢复的成交保持删除，只是不再出现在这个待处理列表里（可用“显示已确认删除”找回）` : ''].filter(Boolean);
+      if (!confirm(`确认清除选中的 ${staleSet.size + hideSet.size} 条？\n${parts.join('；')}。\n不影响任何成交行。`)) return;
+      void changeRemoved((removed, confirmed) => ({ removed: removed.filter(date => !staleSet.has(date)), confirmed: [...new Set([...confirmed.filter(date => !staleSet.has(date)), ...hideSet])] }));
+    });
+    restoreAllButton.addEventListener('click', () => {
+      const picked = new Set(removedItems.map(entry => entry.date)), stale = removedItems.filter(entry => !entry.trade).length;
+      if (!picked.size || !confirm(`确认恢复当前列表里的全部 ${picked.size} 条？${stale ? `\n其中 ${stale} 条已失效，只会被清除，不会产生成交。` : ''}\n恢复后这些成交会重新计入总盈亏、持仓和占用本金，下一格买卖价也可能随之变化。`)) return;
+      void changeRemoved((removed, confirmed) => ({ removed: removed.filter(date => !picked.has(date)), confirmed: confirmed.filter(date => !picked.has(date)) }));
+    });
+    clearButton.addEventListener('click', () => {
+      const staleDates = new Set(allEntries.filter(entry => !entry.trade).map(entry => entry.date));
+      if (!staleDates.size || !confirm(`确认清除 ${staleDates.size} 条已失效的删除记录？\n它们在当前规则下没有对应的网格成交，清除后不影响任何成交行，也无法再恢复。`)) return;
+      void changeRemoved((removed, confirmed) => ({ removed: removed.filter(date => !staleDates.has(date)), confirmed: confirmed.filter(date => !staleDates.has(date)) }));
     });
     document.querySelector('#trades')!.addEventListener('click', event => {
       const button = (event.target as HTMLElement).closest('.delete-trade') as HTMLButtonElement | null;
@@ -442,7 +585,7 @@ const savedUrl = href('lab/grid-trading/saved');
       button.disabled = true;
       commit(item => button.dataset.kind === 'manual'
         ? { ...item, manualTrades: (item.manualTrades ?? []).filter(trade => trade.id !== key) }
-        : { ...item, removedTrades: [...new Set([...(item.removedTrades ?? []), key])] },
+        : { ...item, removedTrades: [...new Set([...(item.removedTrades ?? []), key])], removedConfirmed: (item.removedConfirmed ?? []).filter(date => date !== key) },
       positionProblem('删除后持仓将变为负数，无法删除'))
         .then(problem => { if (problem) { showNote(problem); button.disabled = false; } })
         .catch(() => { showNote('行情获取失败，请稍后重试'); button.disabled = false; });
@@ -619,7 +762,7 @@ const savedUrl = href('lab/grid-trading/saved');
   .line.pure { background: #3b82f6; height: 1.5px; }
   .line.live { height: 0; border-top: 1.5px dashed #f97316; margin-left: 14px; }
   .view-badge { margin-left: 10px; padding: 2px 9px; border-radius: 5px; background: #e0f2fe; color: #0369a1; font-size: 13px; font-weight: 700; vertical-align: 4px; }
-  .backup-view .backup-actions, .backup-view #backup-empty, .backup-view .trade-tools, .backup-view .trade-form { display: none; }
+  .backup-view .backup-actions, .backup-view #backup-empty, .backup-view .trade-tools, .backup-view .trade-form, .backup-view .removed-panel { display: none; }
   .backup-view .detail-table th:last-child, .backup-view .detail-table td:last-child { display: none; }
   .detail-table .after-tag { margin-left: 5px; padding: 1px 5px; border-radius: 3px; background: #e0f2fe; color: #0369a1; font-size: 10px; font-style: normal; font-weight: 600; vertical-align: 1px; }
   .detail-table .after-row { background: #f5faff; }
@@ -680,6 +823,20 @@ const savedUrl = href('lab/grid-trading/saved');
   .trade-form input[type=number] { width: 96px; -moz-appearance: textfield; appearance: textfield; }
   .trade-form input[type=number]::-webkit-inner-spin-button, .trade-form input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
   .trade-form input:focus, .trade-form select:focus { outline: none; border-color: #0369a1; box-shadow: 0 0 0 2px rgb(3 105 161 / .15); }
+  .removed-panel { margin: 0 0 12px; padding: 12px 14px; border: 1px solid #e2e8f0; border-radius: 10px; background: #fff; font-size: 12px; color: #475569; }
+  .removed-panel[hidden] { display: none; }
+  .removed-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; color: #1e293b; font-size: 13px; }
+  .removed-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .removed-table th { padding: 6px 8px; border-bottom: 1px solid #cbd5e1; background: #f8fafc; color: #475569; font-weight: 600; text-align: left; white-space: nowrap; }
+  .removed-table td { padding: 6px 8px; border-bottom: 1px solid #f1f5f9; white-space: nowrap; }
+  .removed-table .buy { color: #16a34a; } .removed-table .sell { color: #dc2626; }
+  .removed-table .ok { color: #0369a1; } .removed-table .muted, .removed-table tr.stale td { color: #94a3b8; }
+  .removed-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+  .tool-button.danger { border-color: #fecaca; color: #dc2626; }
+  .tool-button.danger:hover { border-color: #fca5a5; background: #fef2f2; }
+  .tool-primary:disabled, .tool-button:disabled { opacity: .5; cursor: not-allowed; }
+  .removed-msg { color: #64748b; }
+  .removed-hint { margin: 8px 0 0; color: #94a3b8; }
   .tf-preview { min-width: 130px; color: #0369a1; font-weight: 600; font-variant-numeric: tabular-nums; }
   .tf-error { flex-basis: 100%; color: #dc2626; }
   .tf-error:empty { display: none; }

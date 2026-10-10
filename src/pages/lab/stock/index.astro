@@ -1,0 +1,15 @@
+---
+import Base from '../../../layouts/Base.astro';
+import { href } from '../../../lib/url';
+import StockLabApp from '../../../components/stock/StockLabApp.vue';
+import '../../../styles/stock-tools.css';
+---
+
+<Base title="股市分析" current="lab" wide description="大涨股解读、板块轮动与板块排行。">
+  <nav class="breadcrumb">
+    <a href={href('lab')}>实验</a>
+    <span class="sep">/</span>
+    <span class="current">股市分析</span>
+  </nav>
+  <StockLabApp client:load />
+</Base>

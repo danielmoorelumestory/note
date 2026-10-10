@@ -8,10 +8,12 @@
     "preview": "astro preview"
   },
   "dependencies": {
+    "@astrojs/vue": "^7.0.3",
     "@tailwindcss/typography": "^0.5.20",
     "@tailwindcss/vite": "^4.3.3",
     "astro": "^7.3.3",
-    "tailwindcss": "^4.3.3"
+    "tailwindcss": "^4.3.3",
+    "vue": "^3.5.43"
   },
   "engines": {
     "node": ">=22.12.0"

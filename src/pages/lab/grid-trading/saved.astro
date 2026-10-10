@@ -97,17 +97,18 @@ const detailUrl = href('lab/grid-trading/detail');
     return `<td class="status-cell"><span class="status-badge ${status.tone}${status.reached ? ' reached' : ''}">${status.label}</span><span class="status-detail">${status.detail}</span></td>`;
   }
 
-  // 可编辑的网格参数：价格数值 + 占当前价格的百分比；修改后出现“确认”按钮，确认后只影响之后的下一笔成交。
-  type ParamField = 'step' | 'rebound' | 'pullback';
-  const paramLabels: Record<ParamField, string> = { step: '网格步长', rebound: '反弹买入', pullback: '回落卖出' };
+  // 可编辑的网格参数：修改后出现“确认”按钮，确认后只影响之后的下一笔成交。
+  type ParamField = 'step' | 'rebound' | 'pullback' | 'gridAmount';
+  const paramLabels: Record<ParamField, string> = { step: '网格步长', rebound: '反弹买入', pullback: '回落卖出', gridAmount: '每格金额' };
   const ratioText = (value: number, current: number) => current > 0 ? `${(value / current * 100).toFixed(2)}%` : '';
   function paramCell(item: SavedRecord, field: ParamField) {
     const value = item.row[field], current = item.result.current;
-    return `<td class="param-cell"><input class="param-input" type="number" step="0.001" min="0" inputmode="decimal" value="${value}" data-id="${item.id}" data-field="${field}" data-original="${value}" data-current="${current}" aria-label="${item.row.code} ${paramLabels[field]}"><span class="ratio">${ratioText(value, current)}</span><button type="button" class="confirm-param" hidden>确认</button></td>`;
+    const isAmount = field === 'gridAmount';
+    return `<td class="param-cell"><input class="param-input" type="number" step="${isAmount ? '1' : '0.001'}" min="0" inputmode="decimal" value="${value}" data-id="${item.id}" data-field="${field}" data-original="${value}" data-current="${current}" aria-label="${item.row.code} ${paramLabels[field]}"><span class="ratio">${isAmount ? '' : ratioText(value, current)}</span><button type="button" class="confirm-param" hidden>确认</button></td>`;
   }
   const paramInputOf = (target: EventTarget | null) => (target as HTMLElement).closest('.param-input') as HTMLInputElement | null;
   const confirmOf = (input: HTMLInputElement) => input.closest('td')!.querySelector('.confirm-param') as HTMLButtonElement;
-  const validParam = (field: ParamField, value: number) => Number.isFinite(value) && (field === 'step' ? value > 0 : value >= 0);
+  const validParam = (field: ParamField, value: number) => Number.isFinite(value) && (field === 'step' || field === 'gridAmount' ? value > 0 : value >= 0);
 
   async function applyParam(id: string, field: ParamField, value: number) {
     const record = readRecords().find(item => item.id === id);
@@ -203,7 +204,7 @@ const detailUrl = href('lab/grid-trading/detail');
                 ${paramCell(item, 'step')}
                 ${paramCell(item, 'rebound')}
                 ${paramCell(item, 'pullback')}
-                <td>¥${formatInt.format(item.row.gridAmount)}</td>
+                ${paramCell(item, 'gridAmount')}
                 <td>${item.row.date}</td>
                 <td>${openingOf(item).price}</td>
                 <td>¥${openingOf(item).amount.toLocaleString('zh-CN', { maximumFractionDigits: 2 })}</td>
@@ -266,16 +267,16 @@ const detailUrl = href('lab/grid-trading/detail');
     const changed = validParam(field, value) && tick(value) !== tick(Number(input.dataset.original));
     input.classList.toggle('dirty', changed);
     confirmOf(input).hidden = !changed;
-    (input.nextElementSibling as HTMLElement).textContent = Number.isFinite(value) ? ratioText(value, Number(input.dataset.current)) : '';
+    (input.nextElementSibling as HTMLElement).textContent = field === 'gridAmount' || !Number.isFinite(value) ? '' : ratioText(value, Number(input.dataset.current));
   });
   container.addEventListener('keydown', event => {
     const input = paramInputOf(event.target);
     if (!input) return;
-    const button = confirmOf(input), key = (event as KeyboardEvent).key;
+    const field = input.dataset.field as ParamField, button = confirmOf(input), key = (event as KeyboardEvent).key;
     if (key === 'Enter' && !button.hidden) button.click();
     if (key === 'Escape') {
       input.value = input.dataset.original!; input.classList.remove('dirty'); button.hidden = true;
-      (input.nextElementSibling as HTMLElement).textContent = ratioText(Number(input.dataset.original), Number(input.dataset.current));
+      (input.nextElementSibling as HTMLElement).textContent = field === 'gridAmount' ? '' : ratioText(Number(input.dataset.original), Number(input.dataset.current));
       input.blur();
     }
   });

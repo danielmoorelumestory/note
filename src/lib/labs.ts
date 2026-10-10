@@ -6,6 +6,11 @@ export type Lab = {
 
 export const labs: Lab[] = [
   {
+    slug: 'stock',
+    title: '股市分析',
+    summary: '大涨股解读、板块轮动、板块排行；财联社行情 + IndexedDB 本地缓存。',
+  },
+  {
     slug: 'grid-trading',
     title: '网格交易计算器',
     summary: '按历史日线高低价回测 ETF / A 股网格的买卖触发与盈亏。',

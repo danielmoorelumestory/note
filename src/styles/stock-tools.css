@@ -1,0 +1,87 @@
+/* 股市工具页：与全站 slate/sky 对齐，覆盖原 standalone 站的紫色/全屏布局 */
+.stock-lab .stock-analysis-page,
+.stock-lab .sector-rotation-page,
+.stock-lab .plate-ranking-container,
+.stock-lab .plate-stock-list-page,
+.stock-lab .stock-limit-detail-page {
+  min-height: auto;
+  padding-top: 0;
+  background: transparent;
+}
+
+.stock-lab .control-header,
+.stock-lab .tool-header,
+.stock-lab .header-bar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  margin: 0 0 1rem;
+  padding: 0.75rem 0;
+  height: auto;
+  left: auto;
+  right: auto;
+  background: color-mix(in srgb, var(--bg-raised) 92%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+  box-shadow: none;
+}
+
+/* 宽表横向滚动，避免「详情 / 行情走势」被裁掉 */
+.stock-lab .stock-table,
+.stock-lab .stock-list-container,
+.stock-lab .ranking-table-container,
+.stock-lab .table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.stock-lab .stock-table {
+  min-width: 980px;
+}
+
+.stock-lab .back-btn {
+  border: 1px solid var(--line);
+  background: var(--bg-raised);
+  color: var(--ink);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.stock-lab .back-btn:hover {
+  background: var(--line-subtle);
+}
+
+.stock-lab .page-title {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.stock-lab .copy-all-btn,
+.stock-lab .retry-btn,
+.stock-lab .primary-btn {
+  background: var(--accent) !important;
+  border: none;
+  color: white !important;
+  border-radius: var(--radius-sm);
+}
+
+.stock-lab .copy-all-btn:hover:not(:disabled),
+.stock-lab .retry-btn:hover,
+.stock-lab .primary-btn:hover {
+  filter: brightness(0.92);
+}
+
+.stock-lab .loader {
+  border-top-color: var(--accent);
+}
+
+.stock-lab .plate-name {
+  -webkit-text-fill-color: unset;
+  background: none;
+  color: var(--ink);
+  border-left-color: var(--accent);
+}

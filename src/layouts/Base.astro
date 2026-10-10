@@ -6,9 +6,11 @@ interface Props {
   title?: string;
   description?: string;
   current?: 'notes' | 'lab';
+  /** 宽内容（表格类 lab），放宽 main 最大宽度 */
+  wide?: boolean;
 }
 
-const { title, description = '笔记和行业研究专栏。', current } = Astro.props;
+const { title, description = '笔记和行业研究专栏。', current, wide = false } = Astro.props;
 const pageTitle = title ? `${title} · 记` : '记 · 笔记与行业研究';
 ---
 
@@ -36,7 +38,7 @@ const pageTitle = title ? `${title} · 记` : '记 · 笔记与行业研究';
         </nav>
       </div>
     </header>
-    <main class="mx-auto max-w-5xl px-4 py-8 sm:px-6 sm:py-10">
+    <main class:list={['mx-auto px-4 py-8 sm:px-6 sm:py-10', wide ? 'max-w-7xl' : 'max-w-5xl']}>
       <slot />
     </main>
     <footer class="site-footer">

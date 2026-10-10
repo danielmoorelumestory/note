@@ -285,22 +285,103 @@ async function readExtremes(env: Env, owner: string, url: URL) {
   return json({ window: { from }, extremes });
 }
 
+const CLS_HOSTS = new Set(['api3.cls.cn', 'x-quote.cls.cn']);
+
+// 只给本站页面用，防止被当成公共代理；Origin 可伪造，这里只挡顺手滥用。
+function clsOriginAllowed(origin: string | null) {
+  if (!origin) return false;
+  try {
+    const { protocol, hostname } = new URL(origin);
+    if (hostname === 'localhost' || hostname === '127.0.0.1') return true;
+    return protocol === 'https:' && (hostname === 'danielmoorelumestory.github.io' || hostname.endsWith('.vercel.app'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 边缘缓存时长（秒）与缓存键。up_down_analysis 的 sign 每次签名都变，缓存键去掉 sign；
+ * 历史交易日数据不再变化，缓存一天；当天盘中数据只缓存一分钟。
+ */
+function clsCachePolicy(target: URL): { ttl: number; key: string } {
+  const key = new URL(target);
+  if (target.hostname === 'api3.cls.cn') return { ttl: 240, key: key.href };
+  if (target.pathname.endsWith('/range_trading_days')) return { ttl: 600, key: key.href };
+  if (target.pathname.endsWith('/up_down_analysis')) {
+    key.searchParams.delete('sign');
+    const date = target.searchParams.get('date') ?? '';
+    return { ttl: date && date < compact(beijingToday()) ? 86400 : 60, key: key.href };
+  }
+  return { ttl: 0, key: key.href };
+}
+
+/** 浏览器端拉财联社：静态站无法直连，只允许转发 CLS 两个域名。 */
+async function proxyCls(request: Request, url: URL, ctx: ExecutionContext): Promise<Response> {
+  const origin = request.headers.get('origin');
+  const cors = { 'access-control-allow-origin': origin ?? '*', vary: 'Origin' };
+  if (request.method === 'OPTIONS') {
+    return new Response(null, { headers: { ...cors, 'access-control-allow-methods': 'GET, OPTIONS' } });
+  }
+  if (request.method !== 'GET') return json({ error: '不支持的请求方法。' }, 405);
+  if (!clsOriginAllowed(origin)) return json({ error: '来源不允许。' }, 403);
+  const target = url.searchParams.get('url');
+  if (!target) return json({ error: '缺少 url 参数。' }, 400);
+  let parsed: URL;
+  try {
+    parsed = new URL(target);
+  } catch {
+    return json({ error: 'url 无效。' }, 400);
+  }
+  if (parsed.protocol !== 'https:' || !CLS_HOSTS.has(parsed.hostname)) return json({ error: '目标主机不允许。' }, 403);
+
+  const { ttl, key } = clsCachePolicy(parsed);
+  const cacheKey = new Request(key);
+  const cache = caches.default;
+  if (ttl > 0) {
+    const hit = await cache.match(cacheKey);
+    if (hit) return new Response(hit.body, { status: hit.status, headers: { ...Object.fromEntries(hit.headers), ...cors, 'x-cls-cache': 'HIT' } });
+  }
+
+  const upstream = await fetch(parsed.href, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; note-site/1)', Referer: 'https://www.cls.cn/' },
+  });
+  const body = await upstream.text();
+  const contentType = upstream.headers.get('content-type') || 'application/json; charset=utf-8';
+  if (ttl > 0 && upstream.ok) {
+    // CLS 出错时也返回 200，只缓存业务成功的响应
+    let ok = false;
+    try {
+      const data = JSON.parse(body) as { code?: number; errno?: number };
+      ok = data.code === 200 || data.errno === 0;
+    } catch {}
+    if (ok) {
+      ctx.waitUntil(cache.put(cacheKey, new Response(body, { headers: { 'content-type': contentType, 'cache-control': `public, max-age=${ttl}` } })));
+    }
+  }
+  return new Response(body, { status: upstream.status, headers: { 'content-type': contentType, ...cors, 'x-cls-cache': 'MISS' } });
+}
+
 export default {
   // 定时任务（见 wrangler.jsonc 的 triggers.crons）：每个交易日 15:10、16:00 与次日 09:00 抓取所有已保存标的的 1 分钟线。
   async scheduled(_controller, env) {
     await runSync(env, 'cron', await trackedCodes(env));
   },
-  async fetch(request, env): Promise<Response> {
+  async fetch(request, env, ctx): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname === '/cls') return proxyCls(request, url, ctx);
     if (request.method === 'OPTIONS') return new Response(null, { headers: { 'access-control-allow-origin': '*', 'access-control-allow-methods': 'GET, PUT, POST, OPTIONS', 'access-control-allow-headers': 'authorization, content-type' } });
     const owner = await ownerHash(request);
     if (!owner) return json({ error: '请提供至少 16 位同步密钥。' }, 401);
-    const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/minute') return readMinuteBars(env, url);
     if (request.method === 'GET' && url.pathname === '/daily/extremes') return readExtremes(env, owner, url);
     if (request.method === 'GET' && url.pathname === '/daily') return readDailyBars(env, owner, url);
     if (request.method === 'GET' && url.pathname === '/minute/status') return readMinuteStatus(env, url);
-    // 手动补抓：只抓取该密钥名下已保存记录涉及的标的，与定时任务走同一流程。
-    if (request.method === 'POST' && url.pathname === '/minute/sync') return json(await runSync(env, 'manual', await trackedCodes(env, owner)));
+    // 手动补抓：详情页可指定当前标的，避免该标的尚未写入 records 时漏抓；未指定时兼容旧客户端，抓该密钥下全部标的。
+    if (request.method === 'POST' && url.pathname === '/minute/sync') {
+      const code = (url.searchParams.get('code') ?? '').trim();
+      if (code && !/^\d{6}$/.test(code)) return json({ error: '标的代码格式无效。' }, 400);
+      return json(await runSync(env, 'manual', code ? [code] : await trackedCodes(env, owner)));
+    }
     if (request.method === 'GET') {
       const { results } = await env.DB.prepare('SELECT payload FROM records WHERE owner_hash = ? ORDER BY updated_at DESC').bind(owner).all<{ payload: string }>();
       return json({ records: results.map(row => JSON.parse(row.payload)) });
